@@ -53,7 +53,7 @@ func TestPreview(t *testing.T) {
 
 	features := selectedFeatures(c)
 	confirmed := true
-	rest := restForm(&c, &features, &confirmed, available,
+	rest := restForm(&c, &features, &confirmed, &typedVersions{}, available,
 		available.Vaadin, available.Boot, theme, Options{})
 
 	fmt.Print(ui.Banner("v0.1.0", "25", "4"))
@@ -70,7 +70,7 @@ func TestPreview(t *testing.T) {
 	// the field it is showing, which looks exactly like a list dropping its last
 	// option and is a fault in this harness rather than in the form.
 	start(rest)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 7; i++ {
 		fmt.Println(rest.View())
 		rest.NextGroup()
 	}

@@ -45,7 +45,12 @@ func TestStableVersionsSortsNumericallyAndDropsPreReleases(t *testing.T) {
 		t.Fatalf("stableVersions: %v", err)
 	}
 
+	// Newest first. Truncated to what the tool offers rather than repeating that
+	// number here, so changing it is one edit and this test keeps testing order.
 	want := []string{"25.2.6", "25.2.5", "25.2.0", "25.1.11", "25.1.10", "25.1.9"}
+	if len(want) > offered {
+		want = want[:offered]
+	}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}

@@ -8,6 +8,7 @@ package prompt
 
 import (
 	"bufio"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -33,10 +34,15 @@ var ErrCancelled = errors.New("cancelled")
 // be asked their group id.
 type VersionSource func() versions.Available
 
-// custom is the sentinel a version select uses for "let me type one". Empty
-// because that is what makes the follow-up input start blank, and what the
-// hide test on its group reads.
-const custom = ""
+// custom is the sentinel a version select uses for "let me type one".
+//
+// Deliberately not the empty string. huh matches the bound value against the
+// options to decide where to put the cursor, so a sentinel equal to a string's
+// zero value is the option it lands on whenever that value is not yet set — which
+// opens the list at "type one myself" with every version scrolled out of sight
+// above it. It is also not a shape ValidVersion accepts, so it cannot survive to
+// a pom.xml even if the resolving below were ever skipped.
+const custom = "\x00type-one-myself"
 
 // Options are the ways the conversation itself can be run.
 type Options struct {
@@ -146,6 +152,29 @@ func (r *lineReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// typedVersions holds a version the user typed because the lookup did not offer
+// it. Kept apart from the Config until the form is done, so that "the select was
+// left on the sentinel" and "here is the version" stay two separate facts.
+type typedVersions struct {
+	vaadin string
+	boot   string
+}
+
+// resolve replaces a sentinel left by a select with the version typed in the
+// group that followed it.
+//
+// A sentinel that somehow reaches here with nothing typed is dropped back to the
+// fallback rather than carried forward: it is not a version, and Validate would
+// reject it in a message about a value the user never entered.
+func (t typedVersions) resolve(c *config.Config, vaadinFallback, bootFallback string) {
+	if c.VaadinVersion == custom {
+		c.VaadinVersion = cmp.Or(t.vaadin, vaadinFallback)
+	}
+	if c.BootVersion == custom {
+		c.BootVersion = cmp.Or(t.boot, bootFallback)
+	}
+}
+
 // Run asks the questions, seeded from c, and returns the answers.
 //
 // The questions come in two forms rather than one because the second form's
@@ -177,8 +206,9 @@ func Run(c config.Config, lookup VersionSource, options Options) (config.Config,
 
 	features := selectedFeatures(c)
 	confirmed := true
+	var typed typedVersions
 
-	rest := restForm(&c, &features, &confirmed, available, vaadinList, bootList, theme, options)
+	rest := restForm(&c, &features, &confirmed, &typed, available, vaadinList, bootList, theme, options)
 
 	if err := rest.Run(); err != nil {
 		return c, cancelled(err)
@@ -187,6 +217,7 @@ func Run(c config.Config, lookup VersionSource, options Options) (config.Config,
 		return c, ErrCancelled
 	}
 
+	typed.resolve(&c, vaadinList[0], bootList[0])
 	applyFeatures(&c, features)
 	return c, nil
 }
@@ -239,7 +270,13 @@ func versionNote(fetched []string) string {
 // anyway in accessible mode, so the select-plus-follow-up shape would ask for
 // each version twice. An input already offers a default to accept or type over,
 // which is the whole of what the select was buying.
-func versionGroups(c *config.Config, available versions.Available, vaadinList, bootList []string, options Options) []*huh.Group {
+func versionGroups(
+	c *config.Config,
+	typed *typedVersions,
+	available versions.Available,
+	vaadinList, bootList []string,
+	options Options,
+) []*huh.Group {
 	if options.Accessible {
 		return []*huh.Group{
 			huh.NewGroup(
@@ -256,31 +293,47 @@ func versionGroups(c *config.Config, available versions.Available, vaadinList, b
 					Value(&c.BootVersion).
 					Validate(options.validator(config.ValidVersion)),
 				javaVersionInput(c, options),
-			).Title("3 · Versions").
+			).Title("Versions").
 				Description("Pinned in pom.xml, and in run.conf for the task runner."),
 		}
 	}
 
+	// A group is given one height for the whole form and its fields divide it, so
+	// each list gets a group of its own. Together they left the second list
+	// showing two of its options on a 24-row terminal, and a list nobody can see
+	// is a list nobody can choose from.
 	return []*huh.Group{
+		// One question each, and all three under the same section heading: with a
+		// single field per group, a group title would only repeat the field's own.
 		huh.NewGroup(
 			versionSelect("Vaadin version", versionNote(available.Vaadin), vaadinList, &c.VaadinVersion),
-			versionSelect("Spring Boot version", versionNote(available.Boot), bootList, &c.BootVersion),
-			javaVersionInput(c, options),
-		).Title("3 · Versions").
-			Description("Pinned in pom.xml, and in run.conf for the task runner."),
+		).Title("Versions"),
 
+		huh.NewGroup(
+			versionSelect("Spring Boot version", versionNote(available.Boot), bootList, &c.BootVersion),
+		).Title("Versions"),
+
+		huh.NewGroup(
+			javaVersionInput(c, options),
+		).Title("Versions"),
+
+		// Reached only when a select was left on "type one myself". Bound to its
+		// own field rather than to the version itself, so it opens empty and the
+		// select's answer stays readable as the sentinel it is.
 		huh.NewGroup(
 			huh.NewInput().
 				Prompt(ui.Caret).
 				Title("Vaadin version").
-				Value(&c.VaadinVersion).
+				Description("A version Maven Central did not offer.").
+				Value(&typed.vaadin).
 				Validate(config.ValidVersion),
 		).WithHideFunc(func() bool { return c.VaadinVersion != custom }),
 		huh.NewGroup(
 			huh.NewInput().
 				Prompt(ui.Caret).
 				Title("Spring Boot version").
-				Value(&c.BootVersion).
+				Description("A version Maven Central did not offer.").
+				Value(&typed.boot).
 				Validate(config.ValidVersion),
 		).WithHideFunc(func() bool { return c.BootVersion != custom }),
 	}
@@ -302,11 +355,14 @@ func versionSelect(title, description string, list []string, value *string) *huh
 	}
 	options = append(options, huh.NewOption("type one myself…", custom))
 
+	// Value before Options, not after: Options is what scans for the bound value
+	// to decide which line the cursor opens on, so a value set afterwards arrives
+	// too late and the list opens wherever that scan happened to stop.
 	return huh.NewSelect[string]().
 		Title(title).
 		Description(description).
-		Options(options...).
-		Value(value)
+		Value(value).
+		Options(options...)
 }
 
 // The optional stack pieces, in the order they are offered. Held as data so the
@@ -350,10 +406,25 @@ var featureList = []struct {
 	},
 }
 
+// featureOptions is the stack list, with everything already on listed first.
+//
+// The order is not presentation for its own sake. huh opens a multi-select with
+// both the cursor and the viewport on the first *selected* option, so a list whose
+// first entries are off opens already scrolled past them — and the options nobody
+// can see are exactly the ones nobody thought to turn on. Selected first means
+// the first option is always selected whenever any is, which pins the viewport to
+// the top.
+//
+// A stable partition, so the order within each half is still the order declared
+// in featureList, and the list reads as "on, then off" rather than as shuffled.
 func featureOptions(c config.Config) []huh.Option[string] {
 	options := make([]huh.Option[string], 0, len(featureList))
-	for _, f := range featureList {
-		options = append(options, huh.NewOption(f.label, f.key).Selected(f.get(c)))
+	for _, wanted := range []bool{true, false} {
+		for _, f := range featureList {
+			if f.get(c) == wanted {
+				options = append(options, huh.NewOption(f.label, f.key).Selected(wanted))
+			}
+		}
 	}
 	return options
 }
@@ -401,7 +472,7 @@ func coordinatesForm(c *config.Config, theme *huh.Theme, options Options) *huh.F
 				Description("Maven artifact. Also names the directory and the containers.").
 				Value(&c.ArtifactID).
 				Validate(options.validator(config.ValidArtifactID)),
-		).Title("1 · Coordinates").
+		).Title("Coordinates").
 			Description("What this project is called to Maven."),
 	)
 	return options.apply(form.WithTheme(theme).WithShowHelp(true))
@@ -412,6 +483,7 @@ func restForm(
 	c *config.Config,
 	features *[]string,
 	confirmed *bool,
+	typed *typedVersions,
 	available versions.Available,
 	vaadinList, bootList []string,
 	theme *huh.Theme,
@@ -435,18 +507,19 @@ func restForm(
 				Description("Where the generated Java sources live.").
 				Value(&c.Package).
 				Validate(options.validator(config.ValidPackage)),
-		).Title("2 · Identity").
+		).Title("Identity").
 			Description("What this project is called to people."),
 	}
 
-	groups = append(groups, versionGroups(c, available, vaadinList, bootList, options)...)
+	groups = append(groups, versionGroups(c, typed, available, vaadinList, bootList, options)...)
 
 	groups = append(groups,
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("Stack").
-				Options(featureOptions(*c)...).
+				// Value before Options, for the reason given in versionSelect.
 				Value(features).
+				Options(featureOptions(*c)...).
 				// Every option, plus the row the field's title takes out of the
 				// same budget. This height is the whole list's window, not a
 				// minimum: one row short and the last option is only reachable by
@@ -456,7 +529,7 @@ func restForm(
 				// prose here is a line the list does not get — and the help footer
 				// already says "x toggle • enter confirm".
 				Height(len(featureList)+1),
-		).Title("4 · Stack").
+		).Title("Stack").
 			Description("The core is always generated. These are the rest."),
 
 		huh.NewGroup(
@@ -469,7 +542,7 @@ func restForm(
 			huh.NewConfirm().
 				Title("Generate?").
 				Value(confirmed),
-		).Title("5 · Output"),
+		).Title("Output"),
 	)
 
 	form := huh.NewForm(groups...)

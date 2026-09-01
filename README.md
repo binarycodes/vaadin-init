@@ -10,7 +10,7 @@ $ vaadin-init
 ┃ vaadin-init v0.2.0
 ┃ An opinionated Vaadin 25 and Spring Boot 4 project.
 
-1 · Coordinates
+Coordinates
 What this project is called to Maven.
 
 ┃ Group ID
@@ -24,7 +24,9 @@ What this project is called to Maven.
 enter next
 ```
 
-Five groups — coordinates, identity, versions, stack, output — and then:
+Coordinates, identity, the three versions, the stack, the output directory — one
+list per screen, because a group in huh divides a single height between its fields
+and two long lists sharing one leaves the second one unreadable. Then:
 
 ```
 ╭────────────────────────────────────────────────────────────╮
@@ -148,9 +150,18 @@ path implies, and each optional file appears exactly when its option is on.
 
 `internal/prompt`'s tests drive the whole conversation through huh's accessible
 mode, which is also what `--accessible` gives a screen reader. One of them is a
-layout assertion: a group is given a single height for the whole form and a field
-that does not fit is silently shrunk, so a line of prose added to the stack group
-drops the last option out of view with nothing to report it.
+set of layout assertions, which exist because this class of fault is silent and
+specific:
+
+- a group is given a single height for the whole form and a field that does not fit
+  is quietly shrunk, so a line of prose added to a group drops the last option of
+  its list out of view;
+- `huh` decides which line a list opens on inside `Options(...)`, by scanning for
+  the bound value — so `Value(...)` must be chained *before* `Options(...)` or the
+  list opens wherever that scan stopped;
+- `huh` opens a multi-select on the first *selected* option, so the stack list puts
+  everything already on at the top; otherwise a defaults file that turns the first
+  entries off would open the list scrolled past them.
 
 To look at the form without running it — a form is a `tea.Model`, so a frame of it
 can be rendered anywhere:

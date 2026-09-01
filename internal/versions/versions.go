@@ -38,8 +38,9 @@ const (
 	BootMajor = 4
 
 	// How many releases to offer. Enough to pick the previous patch or an older
-	// minor deliberately, few enough that the list needs no scrolling.
-	offered = 8
+	// minor deliberately, few enough that the list fits a short terminal without
+	// scrolling — anyone who wants an older release than these can type it.
+	offered = 5
 )
 
 // metadata is the part of maven-metadata.xml worth reading.

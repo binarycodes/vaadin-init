@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -113,11 +114,27 @@ func TestInvalidCoordinateIsRefused(t *testing.T) {
 // The stack multi-select is the one answer that has to be mapped back onto
 // several fields, and the mapping is the part that can silently invert.
 //
-// In accessible mode the multi-select asks for a number at a time, toggling
-// each, until 0 confirms the selection.
+// In accessible mode the multi-select asks for a number at a time, toggling each,
+// until 0 confirms the selection. Those numbers are positions in the list as
+// displayed, which is not the order featureList declares — selected options are
+// listed first — so the positions are looked up rather than written down.
 func TestStackSelectionIsAppliedBothWays(t *testing.T) {
+	position := func(key string) string {
+		for i, option := range featureOptions(seed()) {
+			if option.Value == key {
+				return strconv.Itoa(i + 1)
+			}
+		}
+		t.Fatalf("no option for %q", key)
+		return ""
+	}
+
 	blanks := strings.Repeat("\n", 8) // through to the stack question
-	answers := blanks + "2\n" + "1\n" + "0\n" + "\n" + "\n"
+	answers := blanks +
+		position("auth") + "\n" + // on
+		position("database") + "\n" + // off
+		"0\n" + // confirm
+		"\n" + "\n" // directory, generate?
 
 	got, err := run(t, answers)
 	if err != nil {
@@ -134,5 +151,75 @@ func TestStackSelectionIsAppliedBothWays(t *testing.T) {
 	// cleared by the answer that named neither of them.
 	if !got.E2E || !got.Coverage || !got.Traceable {
 		t.Errorf("untouched options should have kept their seeded values: %v", got.Selected())
+	}
+}
+
+// Choosing "type one myself" leaves a sentinel in the version field, and the
+// version typed in the group that follows has to replace it.
+//
+// The sentinel must never survive into a Config: it is not a version, and a
+// pom.xml carrying it would name a dependency that does not exist.
+func TestTypedVersionsResolveTheSentinel(t *testing.T) {
+	cases := []struct {
+		name         string
+		vaadin, boot string
+		typed        typedVersions
+		wantVaadin   string
+		wantBoot     string
+	}{
+		{
+			name:   "a typed version replaces the sentinel",
+			vaadin: custom, boot: custom,
+			typed:      typedVersions{vaadin: "25.3.0-beta1", boot: "4.2.0-RC1"},
+			wantVaadin: "25.3.0-beta1", wantBoot: "4.2.0-RC1",
+		},
+		{
+			name:   "a chosen version is left alone",
+			vaadin: "25.2.6", boot: "4.1.1",
+			typed:      typedVersions{vaadin: "ignored", boot: "ignored"},
+			wantVaadin: "25.2.6", wantBoot: "4.1.1",
+		},
+		{
+			name:   "a sentinel with nothing typed falls back",
+			vaadin: custom, boot: custom,
+			typed:      typedVersions{},
+			wantVaadin: "25.2.6", wantBoot: "4.1.1",
+		},
+		{
+			name:   "only the field left on the sentinel is replaced",
+			vaadin: custom, boot: "4.1.0",
+			typed:      typedVersions{vaadin: "25.9.9"},
+			wantVaadin: "25.9.9", wantBoot: "4.1.0",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := config.Config{VaadinVersion: c.vaadin, BootVersion: c.boot}
+			c.typed.resolve(&cfg, "25.2.6", "4.1.1")
+
+			if cfg.VaadinVersion != c.wantVaadin {
+				t.Errorf("Vaadin version = %q, want %q", cfg.VaadinVersion, c.wantVaadin)
+			}
+			if cfg.BootVersion != c.wantBoot {
+				t.Errorf("Boot version = %q, want %q", cfg.BootVersion, c.wantBoot)
+			}
+			if err := config.ValidVersion(cfg.VaadinVersion); err != nil {
+				t.Errorf("resolved Vaadin version is not a version: %v", err)
+			}
+			if err := config.ValidVersion(cfg.BootVersion); err != nil {
+				t.Errorf("resolved Boot version is not a version: %v", err)
+			}
+		})
+	}
+}
+
+// The sentinel must not be mistakable for an answer.
+func TestSentinelIsNotAValidVersion(t *testing.T) {
+	if err := config.ValidVersion(custom); err == nil {
+		t.Error("the sentinel should never pass version validation")
+	}
+	if custom == "" {
+		t.Error("an empty sentinel collides with the zero value of the field it sits beside")
 	}
 }
