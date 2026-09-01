@@ -137,6 +137,26 @@ They name no project, which is what lets every generated project share them — 
 `run.sh` contains `{{.Endpoints.docker.Host}}` for `docker context inspect`, so
 rendering it would not survive first contact anyway.
 
+## Continuous integration
+
+`.github/workflows/build.yml` verifies three things on every push and pull request:
+
+| Job | |
+| --- | --- |
+| `tool` | gofmt, vet, tests and a binary smoke test on Linux, macOS and Windows — the tool ships a binary for each, so each has to run one |
+| `cross-compile` | `make dist` for all six targets, uploaded as artifacts |
+| `generated-project` | generates a project and builds it with a real JDK — once with nothing optional, once with everything |
+
+That last job is the one that matters most, and the only place a generated project
+is ever compiled: the tests in this repository render the templates and check their
+shape, but well-formed XML is not the same as Maven accepting it, and a wrong class
+name in a Java template is invisible until `javac` sees it. It builds through
+`./run.sh`, so the task runner every generated project ships is verified too.
+
+It runs `./run.sh test` rather than `verify` — that compiles every source and test,
+integration tests included, and runs the unit tests, without the production
+frontend build and browser download that `verify` adds.
+
 ## Development
 
 ```sh

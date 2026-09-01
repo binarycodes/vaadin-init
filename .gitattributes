@@ -1,0 +1,12 @@
+# Line endings are LF in the repository and in every checkout, on every platform.
+#
+# Not a style preference. templates/run.sh is embedded in the binary and copied
+# verbatim into every generated project, so a checkout that converted it to CRLF
+# would produce projects whose task runner dies on its first line with
+# "$'\r': command not found". The same goes for the commit-msg hook. Windows
+# defaults to core.autocrlf=true, which is exactly where that would happen — and
+# it would happen at build time, silently, with nothing in the diff to show it.
+#
+# It also keeps `gofmt -l` honest in CI on a Windows runner, which would otherwise
+# report every Go file as unformatted.
+* text=auto eol=lf

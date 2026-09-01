@@ -1,0 +1,158 @@
+# Verifies the build: the tool itself on every platform it ships for, and the
+# projects it generates.
+#
+# The second half is the point. Nothing else in this repository proves that the
+# templates produce a project that compiles — the tests render them and check
+# their shape, but rendering well-formed XML is not the same as Maven accepting
+# it, and a wrong class name in a Java template is invisible until javac sees it.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push supersedes an in-flight run of the same branch. The generated
+# project jobs are the slow half, and there is nothing to learn from finishing a
+# run against code that has already been replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tool:
+    name: tool (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # From go.mod, so the version the build declares is the version CI uses
+          # and there is no second place to bump.
+          go-version-file: go.mod
+
+      # Not `make check`: make is not reliably present on the Windows runner, and
+      # the point of running there is that this tool ships a Windows binary.
+      # bash is on all three.
+      - name: gofmt
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      # The tool is distributed as a binary, so the binary being runnable on the
+      # platform is part of the build being verified — not just compiling there.
+      - name: smoke test the binary
+        shell: bash
+        run: |
+          # The extension matters on Windows: `go build -o vaadin-init` there
+          # writes a PE file under a name Windows does not consider executable.
+          binary=vaadin-init
+          if [ "$RUNNER_OS" = "Windows" ]; then binary=vaadin-init.exe; fi
+          go build -o "$binary" .
+          "./$binary" --version
+          "./$binary" --dry-run --yes --group-id com.example --artifact-id smoke-app
+
+  cross-compile:
+    name: cross-compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build every platform
+        run: make dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vaadin-init-binaries
+          path: dist/
+          if-no-files-found: error
+
+  generated-project:
+    name: generated project (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The lean end: no container runtime needed, and nothing optional to
+          # hide a fault in the core templates.
+          - name: core
+            flags: --database=false --auth=false --e2e=false --coverage=false --traceable=false
+          # Everything on, which is the combination with the most templates in it
+          # and the only one that exercises Flyway, JPA, Testcontainers, the OIDC
+          # configuration and the coverage gate together.
+          - name: full
+            flags: --database --auth --e2e --coverage --traceable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Matches the JDK the generated pom pins. run.sh looks for the configured
+      # JDK under ~/.sdkman and falls back to JAVA_HOME, which this sets.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: build vaadin-init
+        run: go build -o vaadin-init .
+
+      - name: generate a project
+        run: ./vaadin-init --yes --group-id io.binarycodes --artifact-id ci-app --dir generated ${{ matrix.flags }}
+
+      # A generated project has a git repository but no commit, and a build that
+      # must carry its commit SHA cannot resolve one until there is a commit — so
+      # this is the first thing a real user does too. The generated commit-msg
+      # hook is already wired up, hence a conventional message.
+      - name: commit the generated project
+        working-directory: generated
+        run: |
+          git config user.name "ci"
+          git config user.email "ci@example.com"
+          git add -A
+          git commit -m "chore: initial commit"
+
+      # Through run.sh rather than mvn directly, so the task runner that ships in
+      # every generated project is verified alongside the project.
+      #
+      # `test` and not `verify`: this compiles every source and test — the
+      # integration tests included, so a wrong name in one of those templates
+      # still fails here — and runs the unit tests, without the production
+      # frontend build and the browser download that `verify` adds. The
+      # browserless tests it does run drive the real views.
+      - name: build and test it
+        working-directory: generated
+        run: ./run.sh test
+
+      - name: keep the build output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-${{ matrix.name }}
+          path: generated/target/surefire-reports/
+          if-no-files-found: ignore
