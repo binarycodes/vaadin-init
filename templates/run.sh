@@ -211,7 +211,21 @@ run_mvn() {
     if [[ -n "${COMMIT_PROPERTY}" ]]; then
         local commit
         if ! commit=$(git rev-parse HEAD 2>/dev/null); then
-            echo "Cannot resolve the git commit (not a git repository?)." >&2
+            # A checkout with no commits and a directory that is no repository at
+            # all both fail this, and the two need different things done about
+            # them — so find out which it is rather than guessing in the message.
+            # A fresh project is the first case, and telling someone their new
+            # project is "not a git repository" sends them looking for the wrong
+            # problem.
+            if git rev-parse --git-dir >/dev/null 2>&1; then
+                echo "This repository has no commits yet, so there is no SHA to build with." >&2
+                echo "Make the first commit and retry:" >&2
+                echo "    git add -A && git commit -m 'chore: initial commit'" >&2
+            else
+                echo "This is not a git repository, so nothing can identify this build." >&2
+                echo "Build from a checkout, or drop COMMIT_PROPERTY from ${PROJECT_CONFIG_FILE}" >&2
+                echo "if this project does not need its builds to be traceable." >&2
+            fi
             echo "${COMMIT_PROPERTY} is mandatory; refusing to build." >&2
             exit 1
         fi

@@ -2,6 +2,11 @@
 vaadin-init
 dist/
 
+# Core dumps, which a crashed test binary or toolchain leaves behind wherever it
+# was running — including inside a package directory, where they look like source.
+core
+core.*
+
 # Editors and tools
 .idea/
 .vscode/
