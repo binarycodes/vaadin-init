@@ -5,6 +5,12 @@
 # templates produce a project that compiles — the tests render them and check
 # their shape, but rendering well-formed XML is not the same as Maven accepting
 # it, and a wrong class name in a Java template is invisible until javac sees it.
+#
+# Every action is pinned to a commit SHA. A tag is a mutable pointer the action's
+# owner can move, so `@v4` is a standing agreement to run whatever code is there
+# on the day the job starts — including code added after a maintainer account is
+# taken over. The trailing comment names the release the SHA belongs to, since a
+# hex string on its own says nothing about how far behind it is.
 name: build
 
 on:
@@ -32,9 +38,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
         with:
           # From go.mod, so the version the build declares is the version CI uses
           # and there is no second place to bump.
@@ -76,13 +82,13 @@ jobs:
     name: cross-compile
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
         with:
           go-version-file: go.mod
       - name: build every platform
         run: make dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: vaadin-init-binaries
           path: dist/
@@ -105,15 +111,15 @@ jobs:
           - name: full
             flags: --database --auth --e2e --coverage --traceable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
         with:
           go-version-file: go.mod
 
       # Matches the JDK the generated pom pins. run.sh looks for the configured
       # JDK under ~/.sdkman and falls back to JAVA_HOME, which this sets.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3  # v4.9.1
         with:
           distribution: temurin
           java-version: '21'
@@ -160,7 +166,7 @@ jobs:
 
       - name: keep the build output on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: surefire-reports-${{ matrix.name }}
           path: generated/target/surefire-reports/
