@@ -15,16 +15,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 
 	"github.com/binarycodes/vaadin-init/internal/config"
 	"github.com/binarycodes/vaadin-init/internal/generate"
 	"github.com/binarycodes/vaadin-init/internal/prompt"
+	"github.com/binarycodes/vaadin-init/internal/ui"
 	"github.com/binarycodes/vaadin-init/internal/versions"
 )
 
@@ -53,10 +54,10 @@ const lookupTimeout = 5 * time.Second
 func main() {
 	if err := run(); err != nil {
 		if errors.Is(err, prompt.ErrCancelled) {
-			fmt.Fprintln(os.Stderr, "Cancelled. Nothing was written.")
+			fmt.Fprintln(os.Stderr, ui.Cancelled())
 			os.Exit(130)
 		}
-		fmt.Fprintf(os.Stderr, "vaadin-init: %v\n", err)
+		fmt.Fprintln(os.Stderr, ui.Error(err))
 		os.Exit(1)
 	}
 }
@@ -160,6 +161,13 @@ func run() error {
 	interactive := !*yes && (*accessible ||
 		(isatty.IsTerminal(os.Stdout.Fd()) && isatty.IsTerminal(os.Stdin.Fd())))
 	if interactive {
+		// Not in accessible mode: a rule drawn down the left of two lines is
+		// decoration, and a screen reader has to read it out before reaching the
+		// first question.
+		if !*accessible {
+			fmt.Print(ui.Banner(version,
+				strconv.Itoa(versions.VaadinMajor), strconv.Itoa(versions.BootMajor)))
+		}
 		cfg, err = prompt.Run(cfg, lookup, prompt.Options{Accessible: *accessible})
 		if err != nil {
 			return err
@@ -253,11 +261,6 @@ func startLookup() prompt.VersionSource {
 	}
 }
 
-var (
-	titleStyle = lipgloss.NewStyle().Bold(true)
-	pathStyle  = lipgloss.NewStyle().Faint(true)
-)
-
 func printDryRun(generator *generate.Generator, cfg config.Config) error {
 	files, err := generator.Render(cfg)
 	if err != nil {
@@ -267,38 +270,78 @@ func printDryRun(generator *generate.Generator, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(titleStyle.Render(fmt.Sprintf("%d files would be written under %s", len(files), root)))
+
+	paths := make([]string, 0, len(files))
 	for _, f := range files {
-		fmt.Printf("  %s\n", f.Path)
+		paths = append(paths, f.Path)
 	}
+
+	fmt.Println()
+	fmt.Printf("  %s\n", ui.Heading(fmt.Sprintf("%d files would be written", len(files))))
+	fmt.Println()
+	fmt.Println(ui.FileTree(root, paths))
 	return nil
 }
 
+// displayPath is how a path is written for a person: relative to where they are
+// if it is under there, absolute otherwise.
+//
+// The absolute path is correct and, for the directory just created under the
+// current one, useless — it is mostly the part the user already knows, and it is
+// what they would have to delete from a `cd` line before running it.
+func displayPath(path string) string {
+	working, err := os.Getwd()
+	if err != nil {
+		return path
+	}
+	relative, err := filepath.Rel(working, path)
+	if err != nil || relative == "" || strings.HasPrefix(relative, "..") {
+		return path
+	}
+	return relative
+}
+
 func printResult(cfg config.Config, result generate.Result) {
-	fmt.Println()
-	fmt.Println(titleStyle.Render(fmt.Sprintf("%s is ready", cfg.ProjectName)))
-	fmt.Println(pathStyle.Render(fmt.Sprintf("  %d files under %s", len(result.Paths), result.Root)))
-	fmt.Printf("  Vaadin %s, Spring Boot %s, Java %s\n", cfg.VaadinVersion, cfg.BootVersion, cfg.JavaVersion)
+	options := "none — core only"
 	if on := cfg.Selected(); len(on) > 0 {
-		fmt.Printf("  With: %s\n", strings.Join(on, ", "))
-	} else {
-		fmt.Println("  Core only")
-	}
-	if result.HooksPath {
-		fmt.Println("  git initialised, commit-msg hook wired up")
-	}
-	if result.GitMessage != "" {
-		fmt.Printf("  git: %s\n", result.GitMessage)
+		options = ui.Join(on...)
 	}
 
-	fmt.Println()
-	fmt.Println(titleStyle.Render("Next"))
-	fmt.Printf("  cd %s\n", cfg.OutputDir)
-	if cfg.ContainerRequired() {
-		fmt.Println("  ./run.sh env      # bring up the development stack")
+	git := "not initialised"
+	if result.HooksPath {
+		git = "initialised, commit-msg hook wired up"
+	} else if result.GitInit {
+		git = "initialised"
 	}
-	fmt.Println("  ./run.sh run      # start the application")
-	fmt.Println("  ./run.sh help     # every task")
+
+	rows := []ui.Row{
+		{Label: "where", Value: fmt.Sprintf("%s  (%d files)", displayPath(result.Root), len(result.Paths))},
+		{Label: "stack", Value: ui.Join(
+			"Vaadin "+cfg.VaadinVersion,
+			"Spring Boot "+cfg.BootVersion,
+			"Java "+cfg.JavaVersion)},
+		{Label: "options", Value: options},
+		{Label: "git", Value: git},
+	}
+
+	fmt.Print(ui.Summary(cfg.ProjectName+" is ready", rows, result.GitMessage))
+
+	steps := []ui.Step{{Command: "cd " + displayPath(result.Root)}}
+	if cfg.ContainerRequired() {
+		steps = append(steps, ui.Step{Command: "./run.sh env", Purpose: "bring up the development stack"})
+	}
+	steps = append(steps,
+		ui.Step{Command: "./run.sh run", Purpose: "start the application"},
+	)
+	if cfg.E2E {
+		steps = append(steps, ui.Step{Command: "./run.sh verify", Purpose: "unit tests and integration tests"})
+	} else {
+		steps = append(steps, ui.Step{Command: "./run.sh test", Purpose: "the unit tests"})
+	}
+	steps = append(steps, ui.Step{Command: "./run.sh help", Purpose: "every task"})
+
+	fmt.Println()
+	fmt.Print(ui.NextSteps("Next", steps))
 	fmt.Println()
 }
 

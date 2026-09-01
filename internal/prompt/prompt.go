@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/binarycodes/vaadin-init/internal/config"
+	"github.com/binarycodes/vaadin-init/internal/ui"
 	"github.com/binarycodes/vaadin-init/internal/versions"
 )
 
@@ -154,24 +155,9 @@ func (r *lineReader) Read(p []byte) (int, error) {
 // reached.
 func Run(c config.Config, lookup VersionSource, options Options) (config.Config, error) {
 	options = options.prepared()
-	theme := huh.ThemeCharm()
+	theme := ui.Theme()
 
-	coordinates := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Group ID").
-				Description("Maven group, in reverse-DNS form.").
-				Value(&c.GroupID).
-				Validate(options.validator(config.ValidGroupID)),
-			huh.NewInput().
-				Title("Artifact ID").
-				Description("Maven artifact. Also names the directory and the containers.").
-				Value(&c.ArtifactID).
-				Validate(options.validator(config.ValidArtifactID)),
-		).Title("Coordinates").
-			Description("What this project is called to Maven."),
-	)
-	coordinates = options.apply(coordinates.WithTheme(theme).WithShowHelp(true))
+	coordinates := coordinatesForm(&c, theme, options)
 
 	if err := coordinates.Run(); err != nil {
 		return c, cancelled(err)
@@ -192,52 +178,7 @@ func Run(c config.Config, lookup VersionSource, options Options) (config.Config,
 	features := selectedFeatures(c)
 	confirmed := true
 
-	groups := []*huh.Group{
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Project name").
-				Description("The name that appears in the UI and in the task runner's output.").
-				Value(&c.ProjectName).
-				Validate(options.validator(config.ValidProjectName)),
-			huh.NewInput().
-				Title("Description").
-				Value(&c.Description),
-			huh.NewInput().
-				Title("Base package").
-				Description("Where the generated Java sources live.").
-				Value(&c.Package).
-				Validate(options.validator(config.ValidPackage)),
-		).Title("Identity").
-			Description("What this project is called to people."),
-	}
-
-	groups = append(groups, versionGroups(&c, available, vaadinList, bootList, options)...)
-
-	groups = append(groups,
-		huh.NewGroup(
-			huh.NewMultiSelect[string]().
-				Title("Stack").
-				Description("Space toggles, enter accepts.").
-				Options(featureOptions(c)...).
-				Value(&features).
-				Height(9),
-		).Title("Stack").
-			Description("Vaadin, Spring Boot, the task runner, the commit-message hook,\na view and a test are always generated. These are the rest."),
-
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Directory").
-				Description("Created if it does not exist. Must be empty.").
-				Value(&c.OutputDir).
-				Validate(options.validator(notEmpty)),
-			huh.NewConfirm().
-				Title("Generate?").
-				Value(&confirmed),
-		).Title("Output"),
-	)
-
-	rest := huh.NewForm(groups...)
-	rest = options.apply(rest.WithTheme(theme).WithShowHelp(true))
+	rest := restForm(&c, &features, &confirmed, available, vaadinList, bootList, theme, options)
 
 	if err := rest.Run(); err != nil {
 		return c, cancelled(err)
@@ -303,17 +244,19 @@ func versionGroups(c *config.Config, available versions.Available, vaadinList, b
 		return []*huh.Group{
 			huh.NewGroup(
 				huh.NewInput().
+					Prompt(ui.Caret).
 					Title("Vaadin version").
 					Description(versionNote(available.Vaadin)).
 					Value(&c.VaadinVersion).
 					Validate(options.validator(config.ValidVersion)),
 				huh.NewInput().
+					Prompt(ui.Caret).
 					Title("Spring Boot version").
 					Description(versionNote(available.Boot)).
 					Value(&c.BootVersion).
 					Validate(options.validator(config.ValidVersion)),
 				javaVersionInput(c, options),
-			).Title("Versions").
+			).Title("3 · Versions").
 				Description("Pinned in pom.xml, and in run.conf for the task runner."),
 		}
 	}
@@ -323,17 +266,19 @@ func versionGroups(c *config.Config, available versions.Available, vaadinList, b
 			versionSelect("Vaadin version", versionNote(available.Vaadin), vaadinList, &c.VaadinVersion),
 			versionSelect("Spring Boot version", versionNote(available.Boot), bootList, &c.BootVersion),
 			javaVersionInput(c, options),
-		).Title("Versions").
+		).Title("3 · Versions").
 			Description("Pinned in pom.xml, and in run.conf for the task runner."),
 
 		huh.NewGroup(
 			huh.NewInput().
+				Prompt(ui.Caret).
 				Title("Vaadin version").
 				Value(&c.VaadinVersion).
 				Validate(config.ValidVersion),
 		).WithHideFunc(func() bool { return c.VaadinVersion != custom }),
 		huh.NewGroup(
 			huh.NewInput().
+				Prompt(ui.Caret).
 				Title("Spring Boot version").
 				Value(&c.BootVersion).
 				Validate(config.ValidVersion),
@@ -343,6 +288,7 @@ func versionGroups(c *config.Config, available versions.Available, vaadinList, b
 
 func javaVersionInput(c *config.Config, options Options) *huh.Input {
 	return huh.NewInput().
+		Prompt(ui.Caret).
 		Title("Java version").
 		Description(fmt.Sprintf("The JDK the build pins. Spring Boot %d needs 17 or newer.", versions.BootMajor)).
 		Value(&c.JavaVersion).
@@ -360,8 +306,7 @@ func versionSelect(title, description string, list []string, value *string) *huh
 		Title(title).
 		Description(description).
 		Options(options...).
-		Value(value).
-		Height(len(options) + 2)
+		Value(value)
 }
 
 // The optional stack pieces, in the order they are offered. Held as data so the
@@ -387,7 +332,7 @@ var featureList = []struct {
 	},
 	{
 		key:   "e2e",
-		label: "End-to-end tests — Playwright behind an `it` profile",
+		label: "End-to-end tests — Playwright, behind an it profile",
 		get:   func(c config.Config) bool { return c.E2E },
 		set:   func(c *config.Config, v bool) { c.E2E = v },
 	},
@@ -434,4 +379,99 @@ func applyFeatures(c *config.Config, keys []string) {
 	for _, f := range featureList {
 		f.set(c, chosen[f.key])
 	}
+}
+
+// coordinatesForm is the first form: the two answers everything else is derived
+// from.
+//
+// Built apart from being run so that the appearance can be rendered — and
+// reviewed — without a terminal to run it in.
+func coordinatesForm(c *config.Config, theme *huh.Theme, options Options) *huh.Form {
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Prompt(ui.Caret).
+				Title("Group ID").
+				Description("Maven group, in reverse-DNS form.").
+				Value(&c.GroupID).
+				Validate(options.validator(config.ValidGroupID)),
+			huh.NewInput().
+				Prompt(ui.Caret).
+				Title("Artifact ID").
+				Description("Maven artifact. Also names the directory and the containers.").
+				Value(&c.ArtifactID).
+				Validate(options.validator(config.ValidArtifactID)),
+		).Title("1 · Coordinates").
+			Description("What this project is called to Maven."),
+	)
+	return options.apply(form.WithTheme(theme).WithShowHelp(true))
+}
+
+// restForm is everything after the coordinates, in the order it is asked.
+func restForm(
+	c *config.Config,
+	features *[]string,
+	confirmed *bool,
+	available versions.Available,
+	vaadinList, bootList []string,
+	theme *huh.Theme,
+	options Options,
+) *huh.Form {
+	groups := []*huh.Group{
+		huh.NewGroup(
+			huh.NewInput().
+				Prompt(ui.Caret).
+				Title("Project name").
+				Description("The name that appears in the UI and in the task runner's output.").
+				Value(&c.ProjectName).
+				Validate(options.validator(config.ValidProjectName)),
+			huh.NewInput().
+				Prompt(ui.Caret).
+				Title("Description").
+				Value(&c.Description),
+			huh.NewInput().
+				Prompt(ui.Caret).
+				Title("Base package").
+				Description("Where the generated Java sources live.").
+				Value(&c.Package).
+				Validate(options.validator(config.ValidPackage)),
+		).Title("2 · Identity").
+			Description("What this project is called to people."),
+	}
+
+	groups = append(groups, versionGroups(c, available, vaadinList, bootList, options)...)
+
+	groups = append(groups,
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Stack").
+				Options(featureOptions(*c)...).
+				Value(features).
+				// Every option, plus the row the field's title takes out of the
+				// same budget. This height is the whole list's window, not a
+				// minimum: one row short and the last option is only reachable by
+				// scrolling, with nothing on screen to say it is there.
+				//
+				// The field carries no description for the same reason — a line of
+				// prose here is a line the list does not get — and the help footer
+				// already says "x toggle • enter confirm".
+				Height(len(featureList)+1),
+		).Title("4 · Stack").
+			Description("The core is always generated. These are the rest."),
+
+		huh.NewGroup(
+			huh.NewInput().
+				Prompt(ui.Caret).
+				Title("Directory").
+				Description("Created if it does not exist. Must be empty.").
+				Value(&c.OutputDir).
+				Validate(options.validator(notEmpty)),
+			huh.NewConfirm().
+				Title("Generate?").
+				Value(confirmed),
+		).Title("5 · Output"),
+	)
+
+	form := huh.NewForm(groups...)
+	return options.apply(form.WithTheme(theme).WithShowHelp(true))
 }

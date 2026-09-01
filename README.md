@@ -7,14 +7,41 @@ a project that builds.
 ```
 $ vaadin-init
 
-  Coordinates
-  What this project is called to Maven.
+┃ vaadin-init v0.2.0
+┃ An opinionated Vaadin 25 and Spring Boot 4 project.
 
-  Group ID
-  > io.binarycodes
+1 · Coordinates
+What this project is called to Maven.
+
+┃ Group ID
+┃ Maven group, in reverse-DNS form.
+┃ ❯ io.binarycodes
 
   Artifact ID
-  > book-shelf
+  Maven artifact. Also names the directory and the containers.
+  ❯ book-shelf
+
+enter next
+```
+
+Five groups — coordinates, identity, versions, stack, output — and then:
+
+```
+╭────────────────────────────────────────────────────────────╮
+│  ✓ Book Shelf is ready                                     │
+│                                                            │
+│  where    book-shelf  (22 files)                           │
+│  stack    Vaadin 25.2.6 · Spring Boot 4.1.1 · Java 21      │
+│  options  database · auth · e2e · coverage · traceable      │
+│  git      initialised, commit-msg hook wired up            │
+╰────────────────────────────────────────────────────────────╯
+
+  Next
+    cd book-shelf
+    ./run.sh env     bring up the development stack
+    ./run.sh run     start the application
+    ./run.sh verify  unit tests and integration tests
+    ./run.sh help    every task
 ```
 
 Every question is also a flag, so the same project can be generated from a
@@ -120,4 +147,22 @@ carries an unresolved template value, every Java file declares the package its
 path implies, and each optional file appears exactly when its option is on.
 
 `internal/prompt`'s tests drive the whole conversation through huh's accessible
-mode, which is also what `--accessible` gives a screen reader.
+mode, which is also what `--accessible` gives a screen reader. One of them is a
+layout assertion: a group is given a single height for the whole form and a field
+that does not fit is silently shrunk, so a line of prose added to the stack group
+drops the last option out of view with nothing to report it.
+
+To look at the form without running it — a form is a `tea.Model`, so a frame of it
+can be rendered anywhere:
+
+```sh
+PREVIEW=1 go test ./internal/prompt/ -run TestPreview -v   # every group, plus the summary
+PROFILE=ansi PREVIEW=1 ...                                 # the sixteen-colour fallback
+LIGHT=1 PREVIEW=1 ...                                      # on a light background
+```
+
+`internal/ui` holds the palette, the huh theme and the renderers for everything
+printed around the form. Colours are `CompleteAdaptiveColor`: adaptive for light
+and dark backgrounds, and with the sixteen-colour value stated rather than
+nearest-matched — left to a nearest match, every grey in this palette lands on
+bright blue and the form loses all hierarchy.
