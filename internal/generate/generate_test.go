@@ -5,6 +5,8 @@ import (
 	"encoding/xml"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -278,4 +280,188 @@ func verbatimDestinations() map[string]bool {
 		}
 	}
 	return out
+}
+
+// gitAvailable skips a test on a machine with no git, and gives the ones that run
+// an identity to commit with.
+//
+// The identity comes from the environment rather than from `git config`, because a
+// test must not write to the user's global configuration — and because a CI runner
+// often has no identity at all, which is the case that made the commit worth
+// making here in the first place.
+func gitAvailable(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on the PATH")
+	}
+	t.Setenv("GIT_AUTHOR_NAME", "vaadin-init test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.invalid")
+	t.Setenv("GIT_COMMITTER_NAME", "vaadin-init test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.invalid")
+}
+
+func gitOutput(t *testing.T, root string, args ...string) (string, error) {
+	t.Helper()
+	command := exec.Command("git", args...)
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	return strings.TrimSpace(string(output)), err
+}
+
+// A generated project has to be buildable the moment it is generated.
+//
+// With traceable builds on — the default — its own build refuses to run until a
+// commit exists, because there is no SHA to stamp into it. So the first commit is
+// part of generating, not a step the user has to discover from an error message.
+func TestGeneratedProjectIsCommitted(t *testing.T) {
+	gitAvailable(t)
+
+	c := baseConfig()
+	c.OutputDir = t.TempDir()
+	c.Traceable = true
+
+	result, err := templates(t).Write(c, WriteOptions{Force: true, Git: true, Commit: true})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if !result.GitInit || !result.HooksPath {
+		t.Fatalf("the repository should be set up: %+v", result)
+	}
+	if !result.Committed {
+		t.Fatalf("no commit was made: %s", result.GitMessage)
+	}
+
+	// The commit has to exist, and be the one thing in the history.
+	subject, err := gitOutput(t, result.Root, "log", "--format=%s")
+	if err != nil {
+		t.Fatalf("git log: %v: %s", err, subject)
+	}
+	if subject != initialCommitMessage {
+		t.Errorf("commit subject = %q, want %q", subject, initialCommitMessage)
+	}
+
+	// And nothing may be left behind, or the working tree starts out dirty.
+	status, err := gitOutput(t, result.Root, "status", "--porcelain")
+	if err != nil {
+		t.Fatalf("git status: %v: %s", err, status)
+	}
+	if status != "" {
+		t.Errorf("the working tree should be clean after generating, got:\n%s", status)
+	}
+}
+
+// The commit-msg hook the project ships is wired up before that commit is made,
+// so the commit goes through the hook. A message its own hook would reject would
+// be a poor advertisement for the hook.
+func TestTheInitialCommitSatisfiesTheGeneratedHook(t *testing.T) {
+	gitAvailable(t)
+
+	c := baseConfig()
+	c.OutputDir = t.TempDir()
+
+	result, err := templates(t).Write(c, WriteOptions{Force: true, Git: true, Commit: true})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !result.Committed {
+		t.Fatalf("no commit was made: %s", result.GitMessage)
+	}
+
+	hooksPath, err := gitOutput(t, result.Root, "config", "core.hooksPath")
+	if err != nil || hooksPath != ".githooks" {
+		t.Fatalf("core.hooksPath = %q (%v), want .githooks", hooksPath, err)
+	}
+
+	// Directly: the hook must reject what it claims to reject, or the commit
+	// above proves nothing about it.
+	message := filepath.Join(t.TempDir(), "message")
+	if err := os.WriteFile(message, []byte("not a conventional subject\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hook := exec.Command(filepath.Join(result.Root, ".githooks", "commit-msg"), message)
+	if err := hook.Run(); err == nil {
+		t.Error("the hook should reject a non-conventional subject")
+	}
+}
+
+// A repository that already has history is left alone.
+//
+// --force onto an existing checkout would otherwise sweep whatever was in the
+// working tree into a commit about a new project — which is not this tool's
+// business, and not something the user could easily undo.
+func TestExistingHistoryIsNotTouched(t *testing.T) {
+	gitAvailable(t)
+
+	root := t.TempDir()
+	if output, err := gitOutput(t, root, "init", "--quiet"); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	if err := os.WriteFile(filepath.Join(root, "NOTES.md"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := gitOutput(t, root, "add", "-A"); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+	if output, err := gitOutput(t, root, "commit", "--message", "chore: my own commit"); err != nil {
+		t.Fatalf("git commit: %v: %s", err, output)
+	}
+
+	c := baseConfig()
+	c.OutputDir = root
+
+	result, err := templates(t).Write(c, WriteOptions{Force: true, Git: true, Commit: true})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if result.Committed {
+		t.Error("no commit should have been made over existing history")
+	}
+
+	subjects, err := gitOutput(t, root, "log", "--format=%s")
+	if err != nil {
+		t.Fatalf("git log: %v: %s", err, subjects)
+	}
+	if subjects != "chore: my own commit" {
+		t.Errorf("history = %q, want only the user's own commit", subjects)
+	}
+}
+
+// Asking for a repository without a commit has to give exactly that.
+func TestCommitCanBeDeclined(t *testing.T) {
+	gitAvailable(t)
+
+	c := baseConfig()
+	c.OutputDir = t.TempDir()
+
+	result, err := templates(t).Write(c, WriteOptions{Force: true, Git: true, Commit: false})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !result.HooksPath {
+		t.Fatalf("the repository should still be set up: %+v", result)
+	}
+	if result.Committed {
+		t.Error("no commit should have been made")
+	}
+	if _, err := gitOutput(t, result.Root, "rev-parse", "--verify", "HEAD"); err == nil {
+		t.Error("the repository should have no commits")
+	}
+}
+
+// And asking for no git at all has to leave git alone entirely.
+func TestGitCanBeDeclinedEntirely(t *testing.T) {
+	c := baseConfig()
+	c.OutputDir = t.TempDir()
+
+	result, err := templates(t).Write(c, WriteOptions{Force: true})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if result.GitInit || result.HooksPath || result.Committed {
+		t.Errorf("nothing about git should have happened: %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(result.Root, ".git")); !os.IsNotExist(err) {
+		t.Error("no .git directory should have been created")
+	}
 }

@@ -163,6 +163,23 @@ func renderString(name, text string, c config.Config) (string, error) {
 	return buf.String(), nil
 }
 
+// WriteOptions are the decisions about writing, as opposed to about the project.
+//
+// A struct rather than three booleans in a row: at the call site, Write(cfg,
+// false, true, true) says nothing about which of them is which.
+type WriteOptions struct {
+	// Force writes into a directory that already has something in it.
+	Force bool
+
+	// Git makes the target a repository and points git at the hook the project
+	// ships. Without it, nothing under .git is touched.
+	Git bool
+
+	// Commit makes the first commit. Only ever the first: a repository that
+	// already has history is left alone.
+	Commit bool
+}
+
 // Result reports what a run did, so the caller can print it rather than the
 // generator printing as it goes.
 type Result struct {
@@ -170,6 +187,7 @@ type Result struct {
 	Paths      []string
 	GitInit    bool
 	HooksPath  bool
+	Committed  bool
 	GitMessage string
 }
 
@@ -178,7 +196,7 @@ type Result struct {
 // An existing non-empty directory stops the run unless force is set: the target
 // is usually a path the user typed, and quietly merging a new project into
 // whatever was already there is not a recoverable mistake.
-func (g *Generator) Write(c config.Config, force, initGit bool) (Result, error) {
+func (g *Generator) Write(c config.Config, options WriteOptions) (Result, error) {
 	files, err := g.Render(c)
 	if err != nil {
 		return Result{}, err
@@ -189,7 +207,7 @@ func (g *Generator) Write(c config.Config, force, initGit bool) (Result, error) 
 		return Result{}, fmt.Errorf("resolving %s: %w", c.OutputDir, err)
 	}
 
-	if entries, err := os.ReadDir(root); err == nil && len(entries) > 0 && !force {
+	if entries, err := os.ReadDir(root); err == nil && len(entries) > 0 && !options.Force {
 		return Result{}, fmt.Errorf("%s already exists and is not empty; pass --force to write into it anyway", root)
 	} else if err != nil && !os.IsNotExist(err) {
 		return Result{}, fmt.Errorf("checking %s: %w", root, err)
@@ -212,36 +230,48 @@ func (g *Generator) Write(c config.Config, force, initGit bool) (Result, error) 
 		result.Paths = append(result.Paths, f.Path)
 	}
 
-	if initGit {
-		g.initRepository(root, &result)
+	if options.Git {
+		g.initRepository(root, options.Commit, &result)
 	}
 	return result, nil
 }
 
-// initRepository makes the checkout a git repository and points git at the
-// hook the project ships.
+// initRepository makes the checkout a git repository, points git at the hook the
+// project ships, and makes the first commit.
 //
 // The hook is the reason this is not left to the user: a file under .githooks is
-// inert until core.hooksPath names it, so a generated commit-msg hook that
-// nobody wires up enforces nothing while looking like it does.
+// inert until core.hooksPath names it, so a generated commit-msg hook that nobody
+// wires up enforces nothing while looking like it does.
+//
+// The commit is here for a related reason. A project generated with traceable
+// builds cannot build at all until a commit exists — its own build refuses,
+// because there is no SHA to stamp — so "generated" and "buildable" would
+// otherwise be two different states with an unexplained step between them.
 //
 // Failure here is reported, not fatal. The project is already written and
-// perfectly usable; git being absent or the directory already being a repository
-// is a fact about the machine rather than a problem with the generated project.
-func (g *Generator) initRepository(root string, result *Result) {
+// perfectly usable; git being absent, or having no identity configured, is a fact
+// about the machine rather than a problem with the generated project.
+func (g *Generator) initRepository(root string, commit bool, result *Result) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		result.GitMessage = "git is not on the PATH: run `git init` yourself, then `git config core.hooksPath .githooks`"
 		return
 	}
 
-	run := func(args ...string) error {
+	// output as well as error: git says why it refused in its output, and that
+	// sentence is the only part worth showing.
+	runOutput := func(args ...string) (string, error) {
 		command := exec.Command(git, args...)
 		command.Dir = root
-		if output, err := command.CombinedOutput(); err != nil {
-			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		output, err := command.CombinedOutput()
+		if err != nil {
+			return string(output), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 		}
-		return nil
+		return string(output), nil
+	}
+	run := func(args ...string) error {
+		_, err := runOutput(args...)
+		return err
 	}
 
 	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
@@ -258,4 +288,45 @@ func (g *Generator) initRepository(root string, result *Result) {
 		return
 	}
 	result.HooksPath = true
+
+	if !commit {
+		return
+	}
+
+	// Only ever the first commit. With --force onto an existing checkout, `git
+	// add -A` would sweep up whatever else was in the working tree and commit it
+	// under a message about a new project — which is not this tool's business and
+	// is not something the user could easily undo.
+	if err := run("rev-parse", "--verify", "HEAD"); err == nil {
+		result.GitMessage = "this repository already has commits, so none was made"
+		return
+	}
+
+	if err := run("add", "-A"); err != nil {
+		result.GitMessage = err.Error()
+		return
+	}
+	// A message the project's own hook accepts: Conventional Commits, one line.
+	// A generated project whose first commit its own hook would have rejected
+	// would be a poor advertisement for the hook.
+	if output, err := runOutput("commit", "--message", initialCommitMessage); err != nil {
+		result.GitMessage = "nothing was committed: " + firstLine(output) +
+			". Commit yourself with: git add -A && git commit -m '" + initialCommitMessage + "'"
+		return
+	}
+	result.Committed = true
+}
+
+// initialCommitMessage is what the first commit says. It has to satisfy the hook
+// the project ships — Conventional Commits, one line — since a generated project
+// whose own first commit its own hook would reject is a poor advertisement.
+const initialCommitMessage = "chore: initial commit"
+
+// firstLine keeps git's complaint to its useful part. "Author identity unknown"
+// is followed by a dozen lines of advice that would bury the summary.
+func firstLine(text string) string {
+	if index := strings.IndexByte(text, '\n'); index >= 0 {
+		return strings.TrimSpace(text[:index])
+	}
+	return strings.TrimSpace(text)
 }

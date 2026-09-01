@@ -104,7 +104,8 @@ func run() error {
 
 	yes := flags.Bool("yes", false, "skip the prompts and generate from the flags and defaults")
 	force := flags.Bool("force", false, "write into the target directory even if it is not empty")
-	noGit := flags.Bool("no-git", false, "do not run git init or set core.hooksPath")
+	noGit := flags.Bool("no-git", false, "do not touch git at all: no init, no hook, no commit")
+	noCommit := flags.Bool("no-commit", false, "set the repository up but leave the first commit to you")
 	dryRun := flags.Bool("dry-run", false, "list the files that would be written, and write nothing")
 	accessible := flags.Bool("accessible", os.Getenv("ACCESSIBLE") != "", "ask the questions as plain sequential prompts, for screen readers")
 
@@ -202,7 +203,11 @@ func run() error {
 		return printDryRun(generator, cfg)
 	}
 
-	result, err := generator.Write(cfg, *force, !*noGit)
+	result, err := generator.Write(cfg, generate.WriteOptions{
+		Force:  *force,
+		Git:    !*noGit,
+		Commit: !*noGit && !*noCommit,
+	})
 	if err != nil {
 		return err
 	}
@@ -308,10 +313,15 @@ func printResult(cfg config.Config, result generate.Result) {
 	}
 
 	git := "not initialised"
-	if result.HooksPath {
-		git = "initialised, commit-msg hook wired up"
-	} else if result.GitInit {
-		git = "initialised"
+	if result.GitInit {
+		parts := []string{"initialised"}
+		if result.HooksPath {
+			parts = append(parts, "commit-msg hook wired up")
+		}
+		if result.Committed {
+			parts = append(parts, "first commit made")
+		}
+		git = ui.Join(parts...)
 	}
 
 	rows := []ui.Row{

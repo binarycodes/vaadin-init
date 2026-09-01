@@ -75,7 +75,9 @@ func Summary(title string, rows []Row, notice string) string {
 	}
 	if notice != "" {
 		body.WriteString("\n\n")
-		body.WriteString(noticeStyle.Render(notice))
+		// Wrapped like the values above it: a notice is where a git error lands,
+		// and git is not brief.
+		body.WriteString(noticeStyle.Width(contentWidth).Render(notice))
 	}
 
 	box := lipgloss.NewStyle().

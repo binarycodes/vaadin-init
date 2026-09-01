@@ -122,20 +122,29 @@ jobs:
       - name: build vaadin-init
         run: go build -o vaadin-init .
 
+      # vaadin-init makes the generated project's first commit, and git will not
+      # commit without an identity. A runner has none by default, which is also
+      # the case that has to degrade gracefully rather than fail — so it is set
+      # here deliberately rather than assumed.
+      - name: give git an identity
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.com"
+
       - name: generate a project
         run: ./vaadin-init --yes --group-id io.binarycodes --artifact-id ci-app --dir generated ${{ matrix.flags }}
 
-      # A generated project has a git repository but no commit, and a build that
-      # must carry its commit SHA cannot resolve one until there is a commit — so
-      # this is the first thing a real user does too. The generated commit-msg
-      # hook is already wired up, hence a conventional message.
-      - name: commit the generated project
+      # The commit is what makes the next step possible at all when traceable
+      # builds are on: the build refuses to run without a SHA to stamp. Asserted
+      # rather than assumed, since a silent failure here would show up as a
+      # confusing build error below.
+      - name: check it committed itself
         working-directory: generated
         run: |
-          git config user.name "ci"
-          git config user.email "ci@example.com"
-          git add -A
-          git commit -m "chore: initial commit"
+          git log --oneline
+          test -z "$(git status --porcelain)" || {
+            echo "the generated project should have a clean working tree"; exit 1;
+          }
 
       # Through run.sh rather than mvn directly, so the task runner that ships in
       # every generated project is verified alongside the project.

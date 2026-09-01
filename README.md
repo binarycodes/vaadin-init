@@ -59,6 +59,12 @@ vaadin-init --yes \
 `--dry-run` lists what would be written and writes nothing. `--help` lists every
 flag, with this machine's defaults filled in.
 
+The generated project is a git repository with the commit-message hook wired up
+and the first commit made, so it builds immediately. That last part is not a
+courtesy: with `--traceable` on, the generated build requires the commit SHA it
+was built from and refuses to run until a commit exists. `--no-commit` sets the
+repository up and leaves the commit to you; `--no-git` touches git not at all.
+
 ## Installing
 
 Download the binary for your platform from the releases, or build it:

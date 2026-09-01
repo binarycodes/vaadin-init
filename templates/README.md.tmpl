@@ -106,14 +106,21 @@ fails until the IDE passes the property too. To drop it, remove the
 `run.conf`.
 {{- end}}
 
-## Commit messages
+## Git
 
-The hook enforces Conventional Commits, a subject of at most 100 characters, and a
-single line with no body. It is wired up through `core.hooksPath`:
+This is already a repository, with the first commit made and the commit-message
+hook wired up. The hook enforces Conventional Commits, a subject of at most 100
+characters, and a single line with no body.
+
+A hook cannot travel with a repository, so a fresh clone has to point git at it
+again:
 
 ```sh
 git config core.hooksPath .githooks
 ```
+{{- if .Traceable}}
 
-`vaadin-init` has already run that. A fresh clone has to run it again — a hook
-cannot travel with a repository.
+The first commit is not a courtesy: this build requires the commit SHA it was
+built from (see `build.commit` above), so it cannot run at all until a commit
+exists.
+{{- end}}
