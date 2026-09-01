@@ -1,0 +1,119 @@
+# {{.ProjectName}}
+
+{{if .Description}}{{.Description}}
+
+{{end}}Vaadin {{.VaadinVersion}} on Spring Boot {{.BootVersion}}, Java {{.JavaVersion}}.
+
+## Running it
+
+Everything goes through `./run.sh`, which pins the JDK the build expects before it
+does anything else. A bare `mvn` picks whatever the machine defaults to, and the
+failures that causes look like source errors rather than JDK errors.
+
+```sh
+{{if .ContainerRequired}}./run.sh env      # bring up the development stack
+{{end}}./run.sh run      # start the application on http://localhost:8080
+./run.sh test     # unit tests
+{{if .E2E}}./run.sh verify   # unit tests + integration tests, in production mode
+{{end}}./run.sh help     # every task
+```
+{{if .ContainerRequired}}
+`./run.sh env` also takes `down` (keeps the data), `logs` and `reset` (throws the
+data away).
+{{end}}
+## What is in here
+
+| Path | |
+| --- | --- |
+| `run.sh` | The task runner. Project-independent — nothing in it names this project. |
+| `run.conf` | Everything the runner needs to know about this project. The only file to edit when adopting a newer `run.sh`. |
+| `run.tasks.sh` | This project's own tasks. A `task_<name>` function becomes `./run.sh <name>`. |
+| `.githooks/commit-msg` | Conventional Commits, a 100-character subject, no body. |
+| `src/main/resources/META-INF/resources/styles.css` | The stylesheet entry point — `@import` statements only. |
+{{- if .Database}}
+| `src/main/resources/db/migration` | Flyway migrations. Flyway owns the schema; Hibernate only validates against it. |
+{{- end}}
+{{- if .ContainerRequired}}
+| `environment/dev` | The development stack. |
+{{- end}}
+
+## The opinions
+
+Each of these is a decision, not a default. They are listed because the time to
+disagree with one is now, while it is still one file.
+
+**`vaadin-core`, not `vaadin`.** The commercial components are not on the
+classpath, so no build needs a licence check and no pipeline needs a licence
+secret. Swap the dependency when you actually use one.
+
+**Warnings fail the build.** `-Werror`, with the categories excluded that fire on
+correct Vaadin and Spring code. A warning nobody has to fix is a warning everyone
+learns to scroll past.
+
+**The stylesheet is only `@import`s.** The browser caches each imported partial
+separately, so a rule written directly in `styles.css` is a rule that cannot be
+cached apart from every other rule. `./run.sh styles` exists because editing a
+partial leaves `styles.css` untouched and the browser then serves a stale 304.
+
+**Test ids, not selectors.** Views set `setTestId(...)`, and the tests locate
+elements by `data-testid`. A CSS path into the component tree breaks when a layout
+gains a wrapper; locating by visible text breaks on a rewording.
+
+**Browserless tests live in the view's package.** They read the view's
+package-private fields directly, so a test says what it drives instead of
+searching for it.
+{{- if .Database}}
+
+**Flyway owns the schema, Hibernate validates it.** `ddl-auto=validate` turns a
+drifted entity into a start-up failure rather than a silent rewrite of a running
+deployment's tables. A schema change is a new `V2__` file; an applied migration is
+never edited.
+
+**`open-in-view` is off.** Otherwise the transaction stays open for the whole
+request so a lazy association can be walked from the UI, and a view that waits on
+something slow is a view holding a database connection while it waits.
+
+**Tests use a real PostgreSQL.** Testcontainers, pinned to the image the dev stack
+runs. An in-memory stand-in tests the stand-in.
+{{- end}}
+{{- if .Auth}}
+
+**Login is OIDC; this application never sees a password.** It is an OAuth2
+*client*: it gets the redirect, the token exchange and the OIDC user. The dev
+stack imports a realm with a `dev` / `dev` user, and the client secret in
+`application.properties` is a development value in a committed file — a deployment
+supplies its own through the environment.
+
+**Every view says who may see it.** View-based access control is on, so a view
+with no `@PermitAll`, `@RolesAllowed` or `@AnonymousAllowed` is denied to
+everyone. That is the right default, and a surprising one the first time.
+{{- end}}
+{{- if .Coverage}}
+
+**Coverage is gated where the decisions are.** 80% on `*.service` and
+`*.ui.presenter`, not on the project. A project-wide percentage moves when a view
+gains a layout, and can be met by testing the easy half.
+{{- end}}
+{{- if .Traceable}}
+
+**Every build carries its commit.** The enforcer plugin rejects a build with no
+`-Dbuild.commit`, so no artefact can exist that cannot be traced to a commit.
+`./run.sh` supplies it from `git rev-parse HEAD`.
+
+This is the opinion most likely to get in your way: building straight from an IDE
+fails until the IDE passes the property too. To drop it, remove the
+`require-build-commit` execution from `pom.xml` and `COMMIT_PROPERTY` from
+`run.conf`.
+{{- end}}
+
+## Commit messages
+
+The hook enforces Conventional Commits, a subject of at most 100 characters, and a
+single line with no body. It is wired up through `core.hooksPath`:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+`vaadin-init` has already run that. A fresh clone has to run it again — a hook
+cannot travel with a repository.

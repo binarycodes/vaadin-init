@@ -1,0 +1,9 @@
+/*
+ * Styles for the main view. One partial per view keeps the cascade readable: a
+ * rule's file says which screen it is about, so nobody has to grep for who else
+ * a change might reach.
+ */
+
+.main-view {
+    padding: var(--lumo-space-l);
+}

@@ -1,0 +1,11 @@
+/*
+ * The entry stylesheet. Nothing but @import statements belong here: the browser
+ * caches each imported partial on its own, so a rule written directly in this
+ * file is a rule that cannot be cached separately from every other rule.
+ *
+ * Editing a partial leaves this file unchanged, which means the browser serves a
+ * 304 and keeps the stale partial — `./run.sh styles` touches this file to break
+ * that cache.
+ */
+
+@import url('./styles/main-view.css');

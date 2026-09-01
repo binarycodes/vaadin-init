@@ -1,0 +1,43 @@
+package {{.Package}}.config;
+
+import com.vaadin.flow.spring.security.VaadinSecurityConfigurer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.web.SecurityFilterChain;
+
+/**
+ * Security for a Vaadin application.
+ *
+ * <p>{@link VaadinSecurityConfigurer} rather than a hand-written filter chain: it
+ * is what leaves Vaadin's own internal requests alone while still enforcing CSRF
+ * on everything else, keeps the framework's static resources reachable, and turns
+ * an access denial into a navigation rather than a raw 403 page. Reproducing that
+ * by hand is how a Vaadin application ends up either insecure or unable to boot.
+ *
+ * <p>It also switches on view-based access control, which is why every view needs
+ * to say who may see it — {@code @PermitAll}, {@code @RolesAllowed} or
+ * {@code @AnonymousAllowed}. A view with no such annotation is denied to
+ * everyone, which is the right default and a confusing one the first time.
+ */
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    /**
+     * The registration id from application.properties. It appears in the login
+     * URL Spring Security generates, so the two have to agree.
+     */
+    private static final String REGISTRATION_ID = "keycloak";
+
+    @Bean
+    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        return http.with(VaadinSecurityConfigurer.vaadin(), configurer -> configurer
+                        // Spring Security's own redirect endpoint, not a view of
+                        // ours: there is no login form to show when the password
+                        // is never typed into this application.
+                        .oauth2LoginPage("/oauth2/authorization/" + REGISTRATION_ID, "{baseUrl}"))
+                .build();
+    }
+}

@@ -1,0 +1,126 @@
+package {{.Package}}.ui.view;
+
+import com.vaadin.flow.component.Key;
+import com.vaadin.flow.component.button.Button;
+{{- if .Database}}
+import com.vaadin.flow.component.grid.Grid;
+{{- end}}
+import com.vaadin.flow.component.notification.Notification;
+import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
+import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.component.textfield.TextField;
+import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.Route;
+{{- if .Auth}}
+import jakarta.annotation.security.PermitAll;
+{{- end}}
+{{- if .Database}}
+
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
+
+import {{.Package}}.notes.Note;
+import {{.Package}}.notes.service.NoteService;
+{{- end}}
+
+/**
+ * The application's root view.
+{{- if .Database}}
+ *
+ * <p>It takes {@link NoteService} through the constructor rather than reaching for
+ * a repository itself. That is what lets the view be tested without a Spring
+ * context or a database, and what keeps the transaction boundary in the service
+ * where it can be reasoned about.
+{{- end}}
+ *
+ * <p>The fields are package-private on purpose: a browserless test in the same
+ * package drives them directly, with no lookup by CSS selector or by label text
+ * that a later rewording would break. The test ids are for the browser tests,
+ * which have no such access.
+ */
+@Route("")
+@PageTitle("{{.ProjectName}}")
+{{- if .Auth}}
+@PermitAll
+{{- end}}
+public class MainView extends VerticalLayout {
+
+    static final String MESSAGE_FIELD_TEST_ID = "message-field";
+    static final String ADD_BUTTON_TEST_ID = "add-button";
+{{- if .Database}}
+    static final String NOTES_GRID_TEST_ID = "notes-grid";
+
+    private final NoteService noteService;
+{{- end}}
+
+    final TextField messageField;
+    final Button addButton;
+{{- if .Database}}
+    final Grid<Note> notes;
+{{- end}}
+
+{{if .Database}}    public MainView(NoteService noteService) {
+        this.noteService = noteService;
+
+{{else}}    public MainView() {
+{{end}}        addClassName("main-view");
+        setSizeFull();
+
+        messageField = new TextField();
+        messageField.setPlaceholder("Say something");
+        messageField.setTestId(MESSAGE_FIELD_TEST_ID);
+
+        addButton = new Button("Add", event -> add());
+        addButton.setTestId(ADD_BUTTON_TEST_ID);
+        // Enter submits, because a single text field and a button is a form and
+        // nobody reaches for the mouse to finish one.
+        addButton.addClickShortcut(Key.ENTER);
+{{- if .Database}}
+
+        notes = new Grid<>();
+        notes.setTestId(NOTES_GRID_TEST_ID);
+        notes.addColumn(Note::getBody).setHeader("Note");
+        notes.addColumn(note -> DateTimeFormatter
+                        .ofLocalizedDateTime(FormatStyle.SHORT)
+                        .withZone(ZoneId.systemDefault())
+                        .format(note.getCreatedAt()))
+                .setHeader("Added");
+        notes.setSizeFull();
+{{- end}}
+
+        add(new HorizontalLayout(messageField, addButton));
+{{- if .Database}}
+        add(notes);
+        setFlexGrow(1, notes);
+        refresh();
+{{- end}}
+    }
+
+    /**
+     * Handles the button and the Enter shortcut alike.
+     *
+     * <p>An empty message is rejected here rather than in a listener on the field,
+     * so that both ways of submitting go through the same check.
+     */
+    private void add() {
+        String message = messageField.getValue();
+        if (message == null || message.isBlank()) {
+            Notification.show("Type something first");
+            return;
+        }
+{{- if .Database}}
+        noteService.add(message);
+        refresh();
+{{- end}}
+        Notification.show("Added " + message);
+        messageField.clear();
+        messageField.focus();
+    }
+{{- if .Database}}
+
+    private void refresh() {
+        notes.setItems(noteService.findAllNewestFirst());
+    }
+{{- end}}
+}

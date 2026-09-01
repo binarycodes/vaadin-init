@@ -1,0 +1,30 @@
+package {{.Package}};
+
+import com.vaadin.flow.component.dependency.StyleSheet;
+import com.vaadin.flow.component.page.AppShellConfigurator;
+import com.vaadin.flow.theme.lumo.Lumo;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+/**
+ * {{.ProjectName}}.
+ *
+ * <p>The stylesheets are declared here rather than on a view because this is the
+ * class implementing {@link AppShellConfigurator}: styles named here are loaded
+ * up front with the application shell, so the first view to render is already
+ * styled. A stylesheet pulled in by a view arrives after that view exists, which
+ * is visible as a flash of unstyled content.
+ *
+ * <p>{@code @Theme} and a theme folder are the Vaadin 24 way and are deprecated
+ * in Vaadin 25; {@code @StyleSheet} against
+ * {@code src/main/resources/META-INF/resources} is the replacement.
+ */
+@SpringBootApplication
+@StyleSheet(Lumo.STYLESHEET)
+@StyleSheet("styles.css")
+public class Application implements AppShellConfigurator {
+
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}

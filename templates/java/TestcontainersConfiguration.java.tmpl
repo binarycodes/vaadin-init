@@ -1,0 +1,31 @@
+package {{.Package}};
+
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
+import org.testcontainers.containers.PostgreSQLContainer;
+
+/**
+ * The database the tests run against.
+ *
+ * <p>A real PostgreSQL rather than an in-memory stand-in, because the schema is
+ * owned by Flyway and validated by Hibernate: against a different engine the
+ * migrations are not the migrations that will run in production, and the
+ * validation proves nothing about the schema that will actually be there.
+ *
+ * <p>{@code @ServiceConnection} is what removes the usual block of
+ * {@code @DynamicPropertySource} plumbing — Spring Boot reads the container's
+ * host and port itself and points the datasource at them.
+ *
+ * <p>The image is pinned to the one environment/dev/compose.yaml runs, so a test
+ * cannot pass against a version the application is never deployed on.
+ */
+@TestConfiguration(proxyBeanMethods = false)
+public class TestcontainersConfiguration {
+
+    @Bean
+    @ServiceConnection
+    PostgreSQLContainer<?> postgresContainer() {
+        return new PostgreSQLContainer<>("postgres:18-alpine");
+    }
+}

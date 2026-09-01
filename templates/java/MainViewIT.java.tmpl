@@ -1,0 +1,90 @@
+package {{.Package}}.ui.view;
+
+import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserType;
+import com.microsoft.playwright.Page;
+import com.microsoft.playwright.Playwright;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+{{- if .Database}}
+import org.springframework.context.annotation.Import;
+
+import {{.Package}}.TestcontainersConfiguration;
+{{- end}}
+
+import static com.microsoft.playwright.assertions.PlaywrightAssertions.assertThat;
+
+/**
+ * The same journey as MainViewTest, but through a real browser against a running
+ * server — which is the only place the frontend bundle, the client-side
+ * components and the server actually meet.
+ *
+ * <p>Named *IT so that failsafe runs it at the integration-test phase rather than
+ * surefire running it alongside the unit tests. {@code ./run.sh verify} is what
+ * runs it, and it passes the {@code it} profile that puts the application in
+ * production mode; without that the browser opens a dev-mode page and finds an
+ * empty screen.
+ *
+ * <p>Elements are located by {@code data-testid}, set by the view through
+ * {@code setTestId}. A CSS path into the component tree breaks the first time a
+ * layout gains a wrapper, and locating by visible text breaks on a rewording.
+ */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+{{- if .Database}}
+@Import(TestcontainersConfiguration.class)
+{{- end}}
+class MainViewIT {
+
+    @LocalServerPort
+    private int port;
+
+    private static Playwright playwright;
+    private static Browser browser;
+
+    /**
+     * One browser for the whole class: launching one costs about a second, and a
+     * fresh context per test is enough isolation — a context has its own cookies
+     * and its own storage, which is what one user's session amounts to.
+     */
+    @BeforeAll
+    static void startBrowser() {
+        playwright = Playwright.create();
+        // -Dheadless=false, which the debug-ui profile passes, to watch it run.
+        boolean headless = !"false".equals(System.getProperty("headless"));
+        browser = playwright.chromium()
+                .launch(new BrowserType.LaunchOptions().setHeadless(headless));
+    }
+
+    @AfterAll
+    static void stopBrowser() {
+        if (browser != null) {
+            browser.close();
+        }
+        if (playwright != null) {
+            playwright.close();
+        }
+    }
+
+    @Test
+    @DisplayName("a message added in the browser is confirmed on screen")
+    void addsMessage() {
+        Page page = browser.newContext().newPage();
+        page.navigate("http://localhost:" + port + "/");
+
+        // The test id is on the vaadin-text-field; the value goes into the input
+        // it wraps, which is the element a user actually types in.
+        page.locator("[data-testid='" + MainView.MESSAGE_FIELD_TEST_ID + "'] input")
+                .fill("hello");
+        page.locator("[data-testid='" + MainView.ADD_BUTTON_TEST_ID + "']").click();
+
+        assertThat(page.locator("vaadin-notification-card")).containsText("Added hello");
+{{- if .Database}}
+        assertThat(page.locator("[data-testid='" + MainView.NOTES_GRID_TEST_ID + "']"))
+                .containsText("hello");
+{{- end}}
+    }
+}

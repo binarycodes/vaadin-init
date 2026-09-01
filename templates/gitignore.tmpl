@@ -1,0 +1,29 @@
+# Build output
+target/
+
+# Vaadin's generated frontend. The lockfile and the bundles are build products:
+# they are rebuilt from pom.xml and the @JsModule annotations, and committing them
+# only produces conflicts nobody can resolve by reading them.
+node_modules/
+package.json
+package-lock.json
+pnpm-lock.yaml
+vite.generated.ts
+vite.config.ts
+tsconfig.json
+types.d.ts
+src/main/bundles/
+src/main/dev-bundle/
+frontend/generated/
+frontend/index.html
+{{- if .Database}}
+
+# Local database data, if a volume is ever bind-mounted rather than named.
+environment/dev/data/
+{{- end}}
+
+# Editors and tools
+.idea/
+*.iml
+.vscode/
+.DS_Store

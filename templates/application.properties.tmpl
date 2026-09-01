@@ -1,0 +1,46 @@
+spring.application.name={{.ArtifactID}}
+
+# Opens a browser when the application starts in development mode. It is read only
+# in development, so it costs nothing in production.
+vaadin.launch-browser=true
+
+# Narrowing the class scan to this project's own packages is the single biggest
+# start-up win in a Vaadin application, and it is commented out rather than set
+# because it is a footgun: a route in a package not listed here is not found, and
+# the symptom is a 404 rather than an error naming this line.
+# vaadin.allowed-packages={{.Package}}
+{{- if .Database}}
+
+# The dev stack's PostgreSQL. Matches environment/dev/compose.yaml — change one and
+# you change both. Real credentials belong in the environment, not in this file.
+spring.datasource.url=jdbc:postgresql://localhost:5432/{{.DatabaseName}}
+spring.datasource.username={{.DatabaseName}}
+spring.datasource.password=dev
+
+# Flyway owns the schema and Hibernate only checks it. `validate` is what turns a
+# drifted entity into a failure at start-up instead of a silent rewrite of a
+# running deployment's tables, or a column that quietly stops being read.
+spring.jpa.hibernate.ddl-auto=validate
+
+# Without this, the transaction stays open for the whole request so that a lazy
+# association can be walked from the UI layer. That reads as a convenience until a
+# view holds a database connection while it waits on something slow, and the pool
+# is the thing that runs out.
+spring.jpa.open-in-view=false
+{{- end}}
+{{- if .Auth}}
+
+# OIDC against the dev stack's Keycloak. The secret here is the one
+# environment/dev/keycloak/realm.json imports, and is a development value in a file
+# that is committed — a deployment supplies its own through the environment.
+spring.security.oauth2.client.registration.keycloak.client-id={{.ArtifactID}}
+spring.security.oauth2.client.registration.keycloak.client-secret=dev-secret
+spring.security.oauth2.client.registration.keycloak.scope=openid,profile,email
+
+# The issuer is what the *browser* must be able to reach, because the redirect
+# sends the user there. A container-internal hostname works for the token exchange
+# and then breaks the login it is part of.
+spring.security.oauth2.client.provider.keycloak.issuer-uri=http://localhost:8081/realms/{{.ArtifactID}}
+{{- end}}
+
+logging.level.{{.Package}}=DEBUG

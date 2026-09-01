@@ -1,0 +1,13 @@
+package {{.Package}}.notes;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+
+/**
+ * Notes, as stored.
+ *
+ * <p>No query methods: ordering and paging are the caller's business and arrive
+ * as a {@code Sort} or a {@code Pageable}, which is one method here instead of one
+ * per ordering anybody ever wants.
+ */
+public interface NoteRepository extends JpaRepository<Note, Long> {
+}

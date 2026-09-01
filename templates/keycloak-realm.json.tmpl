@@ -1,0 +1,58 @@
+{
+  "_comment": "A development realm, imported by environment/dev/keycloak/../compose.yaml on start-up. Development credentials only: this file is committed, so nothing in it may ever be a secret that matters. A deployment configures its own realm and passes the client secret through the environment.",
+  "realm": "{{.ArtifactID}}",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginTheme": "keycloak",
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "description": "Anyone who may use {{.ProjectName}}"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "{{.ArtifactID}}",
+      "name": "{{.ProjectName}}",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "dev-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8080"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:8080/*"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "dev",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "dev@example.com",
+      "firstName": "Dev",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "user"
+      ]
+    }
+  ]
+}

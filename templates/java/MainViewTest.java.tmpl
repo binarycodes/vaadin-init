@@ -1,0 +1,79 @@
+package {{.Package}}.ui.view;
+
+import com.vaadin.browserless.SpringBrowserlessTest;
+import com.vaadin.flow.component.notification.Notification;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+{{- if .Database}}
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Import;
+
+import {{.Package}}.TestcontainersConfiguration;
+import {{.Package}}.notes.service.NoteService;
+{{- end}}
+{{- if .Auth}}
+import org.springframework.security.test.context.support.WithMockUser;
+{{- end}}
+
+/**
+ * A browserless test: the view runs as a Java object, with no browser and no
+ * HTTP, which is what makes a UI test fast enough to belong in the unit suite.
+ *
+ * <p>It lives in the view's own package so that it can read the view's
+ * package-private fields directly. Finding a field by CSS selector or by its
+ * label is what makes a UI test break on a rewording that changed nothing.
+ *
+ * <p>{@code test(component)} rather than calling the component's API: the tester
+ * checks the component is visible, enabled and attached first, which is the part
+ * of "a user could do this" that a direct call skips.
+ */
+@SpringBootTest
+{{- if .Database}}
+@Import(TestcontainersConfiguration.class)
+{{- end}}
+{{- if .Auth}}
+// The root view is protected, so an anonymous test would be turned away by the
+// same access control the application relies on. A stub user is what lets this
+// test be about the view.
+@WithMockUser
+{{- end}}
+class MainViewTest extends SpringBrowserlessTest {
+{{- if .Database}}
+
+    @Autowired
+    private NoteService noteService;
+{{- end}}
+
+    @Test
+    @DisplayName("a message is confirmed once added")
+    void addsMessage() {
+        MainView view = navigate(MainView.class);
+
+        test(view.messageField).setValue("hello");
+        test(view.addButton).click();
+
+        Notification notification = find(Notification.class).single();
+        Assertions.assertEquals("Added hello", test(notification).getText());
+{{- if .Database}}
+        Assertions.assertEquals(1, noteService.findAllNewestFirst().size(),
+                "the note should have been stored, not only announced");
+{{- end}}
+    }
+
+    @Test
+    @DisplayName("an empty message is refused")
+    void refusesEmptyMessage() {
+        MainView view = navigate(MainView.class);
+
+        test(view.addButton).click();
+
+        Notification notification = find(Notification.class).single();
+        Assertions.assertEquals("Type something first", test(notification).getText());
+{{- if .Database}}
+        Assertions.assertEquals(0, noteService.findAllNewestFirst().size(),
+                "nothing should have been stored");
+{{- end}}
+    }
+}

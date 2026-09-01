@@ -1,0 +1,64 @@
+package {{.Package}};
+
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+{{- if .Database}}
+import org.springframework.context.annotation.Import;
+{{- end}}
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+/**
+ * Asserts that the application does not serve its root to an anonymous visitor,
+ * but sends them to the identity provider instead.
+ *
+ * <p>This is the one end-to-end assertion about a protected application that
+ * needs no identity provider running: it stops at the redirect rather than
+ * following it. A test that logged in would need a Keycloak to log in against,
+ * and would then fail on any machine where the dev stack is not up — which is a
+ * test that reports on the machine rather than on the application.
+ *
+ * <p>To grow this into a real login test, bring the dev stack up
+ * ({@code ./run.sh env}) and drive Keycloak's login form with Playwright: its
+ * fields are {@code #username} and {@code #password}, and
+ * environment/dev/keycloak/realm.json imports a {@code dev}/{@code dev} user.
+ *
+ * <p>The JDK's own client, because it can be told not to follow the redirect. A
+ * client that follows it would arrive at an identity provider that may not be
+ * running and report that as a failure of this application.
+ */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+{{- if .Database}}
+@Import(TestcontainersConfiguration.class)
+{{- end}}
+class ProtectedRootIT {
+
+    @LocalServerPort
+    private int port;
+
+    @Test
+    @DisplayName("an anonymous visitor is sent to the identity provider")
+    void redirectsAnonymousVisitorToLogin() throws IOException, InterruptedException {
+        HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+
+        HttpResponse<Void> response = client.send(
+                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/")).build(),
+                HttpResponse.BodyHandlers.discarding());
+
+        Assertions.assertEquals(302, response.statusCode(),
+                "the root should redirect an anonymous visitor, not serve them the view");
+
+        String location = response.headers().firstValue("Location").orElse("");
+        Assertions.assertTrue(location.contains("/oauth2/authorization/keycloak"),
+                "expected a redirect to the OAuth2 client, got: " + location);
+    }
+}

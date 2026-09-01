@@ -1,0 +1,449 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>{{.GroupID}}</groupId>
+    <artifactId>{{.ArtifactID}}</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>{{.ProjectName}}</name>
+{{- if .Description}}
+    <description>{{.Description}}</description>
+{{- end}}
+
+    <properties>
+        <java.version>{{.JavaVersion}}</java.version>
+        <vaadin.version>{{.VaadinVersion}}</vaadin.version>
+{{- if .BrowserTests}}
+        <playwright.version>1.59.0</playwright.version>
+        <headless>true</headless>
+{{- end}}
+{{- if .Coverage}}
+        <jacoco.version>0.8.13</jacoco.version>
+{{- end}}
+        <!--
+            Surefire and failsafe read argLine, and JaCoCo's prepare-agent overwrites it
+            with the coverage agent. Both plugins therefore ask for it late, as
+            @{argLine}, so the coverage agent survives having the Mockito agent appended.
+            This empty default is what keeps that working when JaCoCo does not run
+            (-Djacoco.skip=true): with no property to resolve, @{argLine} would reach the
+            forked JVM literally and it would refuse to start.
+        -->
+        <argLine></argLine>
+    </properties>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>{{.BootVersion}}</version>
+        <relativePath/>
+    </parent>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.vaadin</groupId>
+                <artifactId>vaadin-bom</artifactId>
+                <version>${vaadin.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!--
+            vaadin-core, not vaadin: this build stays on the free components, so
+            pulling the commercial ones in only to leave them unused would put a
+            license check on every build and a secret in every pipeline. Swap in
+            vaadin if and when a commercial component is actually used.
+        -->
+        <dependency>
+            <groupId>com.vaadin</groupId>
+            <artifactId>vaadin-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.vaadin</groupId>
+            <artifactId>vaadin-spring-boot-starter</artifactId>
+        </dependency>
+        <!--
+            Both optional: they are development tools, and optional is what keeps
+            them out of the dependency tree of anything that depends on this, and
+            out of the production image.
+        -->
+        <dependency>
+            <groupId>com.vaadin</groupId>
+            <artifactId>vaadin-dev</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-devtools</artifactId>
+            <optional>true</optional>
+        </dependency>
+{{- if .Auth}}
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <!--
+            Login is OIDC against an identity provider, so this is an OAuth2
+            *client* rather than a resource server: it needs the redirect, the token
+            exchange and the OIDC user, not bearer-token validation.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-client</artifactId>
+        </dependency>
+{{- end}}
+{{- if .Database}}
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <!--
+            Runtime scope: nothing in the source names a driver class, the JDBC URL
+            selects it.
+        -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!--
+            Flyway owns the schema, and Hibernate is told to validate against it
+            rather than generate it: a schema that drifts from the entities should
+            fail startup, not be silently rewritten under a running deployment.
+            flyway-database-postgresql is a separate artifact since Flyway 10 —
+            without it the migration fails with "no database support".
+        -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <!--
+            Spring Boot 4 splits auto-configuration into a module per technology, so
+            flyway-core alone is the library with nothing wiring it up: the
+            migrations never run, and Hibernate then fails validation against a
+            schema nothing created.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-flyway</artifactId>
+        </dependency>
+{{- end}}
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            Vaadin's browserless tests: they drive the views as Java objects, with no
+            browser and no server, which is what makes a UI test fast enough to keep
+            in the unit-test suite. The -spring artifact adds the Spring-aware base
+            class, without which a view that takes its collaborators through the
+            constructor cannot be instantiated by the test at all.
+        -->
+        <dependency>
+            <groupId>com.vaadin</groupId>
+            <artifactId>browserless-test-junit6</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.vaadin</groupId>
+            <artifactId>browserless-test-spring</artifactId>
+            <scope>test</scope>
+        </dependency>
+{{- if .BrowserTests}}
+        <!--
+            Playwright drives a real browser for the integration tests. It brings
+            its own browsers, downloaded on first use, so the tests need no Docker
+            and no browser installed on the machine.
+        -->
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>${playwright.version}</version>
+            <scope>test</scope>
+        </dependency>
+{{- end}}
+{{- if .Auth}}
+        <!--
+            The views are protected, so a browserless test has to be able to say who
+            it is. Without this, @WithMockUser does not resolve and the tests are
+            turned away by the application's own access control.
+        -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+{{- end}}
+{{- if .Database}}
+        <!--
+            A real PostgreSQL for the tests that touch it. An in-memory stand-in
+            would only be testing the stand-in: the collation, the types and any
+            query that is not plain SQL all behave differently. Versions come from
+            the Spring Boot BOM, which imports the Testcontainers BOM.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+{{- end}}
+    </dependencies>
+
+    <build>
+        <defaultGoal>spring-boot:run</defaultGoal>
+        <plugins>
+            <!--
+                Warnings fail the build. The exclusions are the categories that fire
+                on correct code in a Vaadin and Spring project, so leaving them on
+                would train everyone to ignore the output:
+                  serial      - Vaadin components are Serializable without serialVersionUID
+                  this-escape - a view calls add() and setSizeFull() from its constructor
+                  path        - non-existent classpath entries, environmental not code
+                  processing  - no annotation processor claims the Spring and Vaadin
+                                annotations, which are read at runtime
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <compilerArgs>
+                        <arg>-Xlint:all,-serial,-this-escape,-path,-processing</arg>
+                        <arg>-Werror</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <!--
+                Exposes every resolved dependency's path as a property, which is the
+                only way to name the Mockito jar in an argLine without hard-coding a
+                version.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>resolve-agent-paths</id>
+                        <goals><goal>properties</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+{{- if .Traceable}}
+            <!--
+                The deployed commit SHA is mandatory: every build must be traceable to
+                a commit. build.commit has no default, so a build that fails to supply
+                -Dbuild.commit=<sha> is rejected here at validate rather than silently
+                shipping an unidentifiable artefact. ./run.sh supplies it from
+                `git rev-parse HEAD`; a container build should pass it as a build arg,
+                and CI from its own commit variable.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>require-build-commit</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireProperty>
+                                    <property>build.commit</property>
+                                    <message>build.commit is required: pass -Dbuild.commit=&lt;git sha&gt;. Build through ./run.sh, which sets it automatically.</message>
+                                    <regex>[0-9a-fA-F]{7,40}</regex>
+                                    <regexMessage>build.commit must be a git commit SHA (7-40 hex chars).</regexMessage>
+                                </requireProperty>
+                            </rules>
+                            <failFast>true</failFast>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+{{- end}}
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+{{- if .Traceable}}
+                        <configuration>
+                            <additionalProperties>
+                                <commit>${build.commit}</commit>
+                            </additionalProperties>
+                        </configuration>
+{{- end}}
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>com.vaadin</groupId>
+                <artifactId>vaadin-maven-plugin</artifactId>
+                <version>${vaadin.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build-frontend</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+{{- if .Coverage}}
+            <!--
+                The gate covers the packages where the decisions live, and only
+                those. A project-wide percentage is a number nobody can act on: it
+                moves when a view gains a layout, and it can be met by testing the
+                easy half. Add packages here as the project grows its own.
+            -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals><goal>prepare-agent</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals><goal>report</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>coverage-check</id>
+                        <phase>test</phase>
+                        <goals><goal>check</goal></goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>PACKAGE</element>
+                                    <includes>
+                                        <include>{{.Package}}.*.service</include>
+                                        <include>{{.Package}}.*.ui.presenter</include>
+                                    </includes>
+                                    <limits>
+                                        <limit>
+                                            <counter>INSTRUCTION</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.80</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+{{- end}}
+            <!--
+                Mockito's inline mock maker attaches itself as an agent at runtime,
+                which the JDK is in the process of withdrawing; passing it as
+                -javaagent is the supported way. Mockito arrives with
+                spring-boot-starter-test and the Spring test infrastructure
+                initialises it whether or not anything here mocks anything, so this
+                exists to keep the build quiet on a future JDK rather than to enable
+                anything.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+                </configuration>
+            </plugin>
+{{- if .E2E}}
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+{{- if .BrowserTests}}
+                    <systemPropertyVariables>
+                        <headless>${headless}</headless>
+                    </systemPropertyVariables>
+{{- end}}
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!--
+                Renders the failsafe and surefire XML results into a browsable list
+                under target/reports/. Not a gate — a human-readable catalogue of
+                which scenarios ran and passed, where @DisplayName on the test
+                classes and methods becomes the scenario text.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-report-plugin</artifactId>
+                <version>3.5.5</version>
+                <configuration>
+                    <outputDirectory>${project.build.directory}/reports</outputDirectory>
+                    <showSuccess>true</showSuccess>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>e2e-scenario-report</id>
+                        <phase>post-integration-test</phase>
+                        <goals><goal>failsafe-report-only</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+{{- end}}
+        </plugins>
+    </build>
+{{- if .E2E}}
+
+    <profiles>
+        <!--
+            The integration tests need the application in production mode; without
+            this profile they open a dev-mode page and find an empty screen.
+            ./run.sh verify passes it.
+        -->
+        <profile>
+            <id>it</id>
+            <properties>
+                <vaadin.productionMode>true</vaadin.productionMode>
+{{- if .BrowserTests}}
+                <headless>true</headless>
+{{- end}}
+            </properties>
+        </profile>
+{{- if .BrowserTests}}
+        <!--
+            Watch the browser drive itself. ./run.sh verify -Pdebug-ui
+        -->
+        <profile>
+            <id>debug-ui</id>
+            <properties>
+                <headless>false</headless>
+            </properties>
+        </profile>
+{{- end}}
+    </profiles>
+{{- end}}
+
+
+</project>

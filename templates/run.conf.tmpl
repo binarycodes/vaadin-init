@@ -1,0 +1,50 @@
+# What this project's task runner needs to know about it. run.sh itself is shared
+# and names no project, so this file is the only thing a different project edits.
+#
+# Plain assignments, not `readonly` — run.sh applies its defaults over anything
+# left out, so a key only has to appear here when its answer is a decision.
+
+# Named in what the tasks print, so the messages say whose stack came up.
+PROJECT_NAME="{{.ProjectName}}"
+
+# The JDK to build with, matched as a prefix against SDKMAN's candidates.
+JAVA_VERSION="{{.JavaVersion}}"
+
+# Where the development stack is defined: compose.yaml for docker, quadlet/ for
+# podman. Both are read from here, never listed in the runner.
+ENV_DIR="environment/dev"
+
+# Whether this project needs a container runtime at all. When true, every task
+# resolves one up front and stops if there is none — the application does not start
+# without the services it talks to, and the tests bring their own.
+CONTAINER_REQUIRED="{{if .ContainerRequired}}true{{else}}false{{end}}"
+
+# The prefix every container and volume of that stack is named with, which is how
+# `env reset` finds the storage to throw away without naming each volume. Defaults
+# to the project name lowercased and suffixed -dev, so it only needs setting for a
+# project whose containers are named something else.
+# CONTAINER_PREFIX="{{.ContainerPrefix}}"
+
+# Vaadin's own defaults, and the entry stylesheet whose @imports the browser caches.
+# Both only need setting for a project that puts them somewhere else.
+# BUNDLE_DIR="src/main/bundles"
+# STYLES_CSS="src/main/resources/META-INF/resources/styles.css"
+{{if .E2E}}
+# The profile that puts the integration tests in production mode.
+IT_PROFILE="{{.ITProfile}}"
+{{- else}}
+# The profile that puts integration tests in production mode. This project has no
+# integration tests, so `verify` needs no profile.
+# IT_PROFILE="it"
+{{- end}}
+{{if .Traceable}}
+# A property carrying the deployed commit SHA, passed to every mvn invocation. The
+# enforcer plugin rejects a build without it, which is what makes every artefact
+# traceable to a commit. A checkout that is not a git repository therefore cannot
+# build — deliberately.
+COMMIT_PROPERTY="{{.CommitProperty}}"
+{{- else}}
+# A property carrying the deployed commit SHA. Unset, so a checkout that is not a
+# git repository builds fine and no build is required to identify itself.
+# COMMIT_PROPERTY="build.commit"
+{{- end}}

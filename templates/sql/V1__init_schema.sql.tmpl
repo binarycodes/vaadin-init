@@ -1,0 +1,21 @@
+-- The initial schema.
+--
+-- Flyway applies this once and records that it did; it is never edited again. A
+-- change to the schema is a new V2__ file, because a checksum change to a file
+-- that has already been applied somewhere is a failed start-up on that machine.
+--
+-- Hibernate is configured to validate against this rather than generate it, so
+-- this file and the entities have to agree — and disagreeing fails at start-up.
+
+create table note (
+    id         bigserial    primary key,
+    -- Not "text": that is a type name in PostgreSQL, and while it is legal as a
+    -- column name it needs quoting in enough places to be worth avoiding.
+    body       varchar(255) not null,
+    -- timestamptz, not timestamp: an Instant is a point in time, and a column
+    -- without a zone silently reinterprets it as the server's local time.
+    created_at timestamptz  not null
+);
+
+-- The read the application actually makes: newest first.
+create index note_created_at_desc_idx on note (created_at desc);

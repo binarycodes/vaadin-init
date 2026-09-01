@@ -1,0 +1,47 @@
+package {{.Package}}.notes.service;
+
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+
+import {{.Package}}.notes.Note;
+import {{.Package}}.notes.NoteRepository;
+
+/**
+ * What the application does with notes.
+ *
+ * <p>The transaction boundary is here rather than in the view, because a
+ * transaction should span one decision: the view's job is to say that the user
+ * asked for a note to be added, and this class's job is to make that either
+ * entirely happen or not happen at all.
+ *
+ * <p>This is also the layer the coverage gate in pom.xml measures — see the
+ * jacoco {@code coverage-check} rule, which names {@code *.service} packages.
+ */
+@Service
+public class NoteService {
+
+    private final NoteRepository repository;
+
+    public NoteService(NoteRepository repository) {
+        this.repository = repository;
+    }
+
+    /**
+     * Newest first, which is the order the notes are read in.
+     *
+     * <p>Sorted by the database rather than in memory: this is a list that grows,
+     * and the moment it needs paging the sort has to be where the paging is.
+     */
+    @Transactional(readOnly = true)
+    public List<Note> findAllNewestFirst() {
+        return repository.findAll(Sort.by(Sort.Direction.DESC, "createdAt"));
+    }
+
+    @Transactional
+    public Note add(String body) {
+        return repository.save(new Note(body));
+    }
+}

@@ -1,0 +1,8 @@
+# The built binary and the cross-compiled release artifacts.
+vaadin-init
+dist/
+
+# Editors and tools
+.idea/
+.vscode/
+.DS_Store

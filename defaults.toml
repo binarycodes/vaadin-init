@@ -1,0 +1,36 @@
+# Defaults vaadin-init offers in the TUI. Every value here is a starting point the
+# user can accept or edit, never a constraint — the tool asks, this file only says
+# what the cursor starts on.
+#
+# This copy is embedded in the binary. To change the defaults for yourself, drop a
+# file with the same shape at <user config dir>/vaadin-init/defaults.toml (that is
+# ~/.config on Linux, ~/Library/Application Support on macOS, %AppData% on Windows)
+# or pass --defaults <path>. Keys left out fall back to the embedded copy, so a
+# personal file only has to name what it changes.
+
+# Maven coordinates. The group id is the one answer nobody can guess for you, so
+# it is left as an obvious placeholder: com.example is wrong in a way a reader
+# spots at once, which a plausible-looking guess would not be.
+group_id = "com.example"
+artifact_id = "my-app"
+description = "A Vaadin application"
+
+# The JDK the generated project pins, written into both pom.xml and run.conf so the
+# build and the task runner cannot disagree about it.
+java_version = "21"
+
+# Fallbacks for the two versions the tool looks up at startup. They go stale the
+# week after release, which is why they are the answer of last resort — used only
+# when Maven Central cannot be reached.
+vaadin_version = "25.2.6"
+boot_version = "4.1.1"
+
+# Which of the optional stack pieces start out selected. The lean core (Vaadin,
+# Spring Boot, the task runner, the commit-message hook, one view and one test) is
+# not listed because it is not optional.
+[features]
+database = true   # PostgreSQL, Flyway, JPA, Testcontainers, a dev compose file
+auth = false      # OIDC login against Keycloak in the dev stack
+e2e = true        # Playwright browser tests behind an `it` profile
+coverage = true   # JaCoCo with a gate on the service and presenter packages
+traceable = true  # every build must carry the commit SHA it was built from

@@ -1,0 +1,20 @@
+# {{.ProjectName}}'s own tasks, sourced by run.sh after its helpers so these can
+# call setup and run_mvn the way the built-in tasks do.
+#
+# Keeping them here rather than in run.sh is what lets this project take a newer
+# runner without a merge. A function named task_<name> becomes ./run.sh <name>.
+#
+# It may also define project_usage, printed under the built-in task list.
+
+# task_smoke() {
+#     setup
+#     run_mvn -q test -Dtest=MainViewTest
+# }
+#
+# project_usage() {
+#     cat <<'EOF'
+#
+# {{.ProjectName}}'s own:
+#   smoke      Run only the main view's test
+# EOF
+# }
