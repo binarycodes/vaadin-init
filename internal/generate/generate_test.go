@@ -163,6 +163,7 @@ func TestOptionalFilesFollowTheirOption(t *testing.T) {
 		{"src/main/java/com/example/tools/noteharbor/notes/service/NoteService.java", func(c config.Config) bool { return c.Database }},
 		{"src/test/java/com/example/tools/noteharbor/TestcontainersConfiguration.java", func(c config.Config) bool { return c.Database }},
 		{"src/main/java/com/example/tools/noteharbor/config/SecurityConfig.java", func(c config.Config) bool { return c.Auth }},
+		{"src/test/java/com/example/tools/noteharbor/TestSecurityConfiguration.java", func(c config.Config) bool { return c.Auth }},
 		{"environment/dev/keycloak/realm.json", func(c config.Config) bool { return c.Auth }},
 		{"environment/dev/compose.yaml", func(c config.Config) bool { return c.ContainerRequired() }},
 		{"src/test/java/com/example/tools/noteharbor/ui/view/MainViewIT.java", func(c config.Config) bool { return c.BrowserTests() }},

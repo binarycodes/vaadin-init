@@ -88,6 +88,7 @@ var manifest = []file{
 	{src: "java/TestcontainersConfiguration.java.tmpl", dst: "src/test/java/{{.PackagePath}}/TestcontainersConfiguration.java", when: database},
 
 	{src: "java/SecurityConfig.java.tmpl", dst: "src/main/java/{{.PackagePath}}/config/SecurityConfig.java", when: auth},
+	{src: "java/TestSecurityConfiguration.java.tmpl", dst: "src/test/java/{{.PackagePath}}/TestSecurityConfiguration.java", when: auth},
 	{src: "keycloak-realm.json.tmpl", dst: "environment/dev/keycloak/realm.json", when: auth},
 
 	{src: "java/MainViewIT.java.tmpl", dst: "src/test/java/{{.PackagePath}}/ui/view/MainViewIT.java", when: browserTests},

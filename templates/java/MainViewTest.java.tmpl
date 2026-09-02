@@ -5,16 +5,25 @@ import com.vaadin.flow.component.notification.Notification;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 {{- if .Database}}
 import org.springframework.beans.factory.annotation.Autowired;
+{{- end}}
+import org.springframework.boot.test.context.SpringBootTest;
+{{- if or .Database .Auth}}
 import org.springframework.context.annotation.Import;
-
-import {{.Package}}.TestcontainersConfiguration;
-import {{.Package}}.notes.service.NoteService;
 {{- end}}
 {{- if .Auth}}
 import org.springframework.security.test.context.support.WithMockUser;
+{{- end}}
+{{- if or .Database .Auth}}
+
+{{- end}}
+{{- if .Auth}}
+import {{.Package}}.TestSecurityConfiguration;
+{{- end}}
+{{- if .Database}}
+import {{.Package}}.TestcontainersConfiguration;
+import {{.Package}}.notes.service.NoteService;
 {{- end}}
 
 /**
@@ -30,8 +39,12 @@ import org.springframework.security.test.context.support.WithMockUser;
  * of "a user could do this" that a direct call skips.
  */
 @SpringBootTest
-{{- if .Database}}
+{{- if and .Database .Auth}}
+@Import({TestcontainersConfiguration.class, TestSecurityConfiguration.class})
+{{- else if .Database}}
 @Import(TestcontainersConfiguration.class)
+{{- else if .Auth}}
+@Import(TestSecurityConfiguration.class)
 {{- end}}
 {{- if .Auth}}
 // The root view is protected, so an anonymous test would be turned away by the

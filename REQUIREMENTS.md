@@ -414,6 +414,7 @@ template, which is what places Java sources under the chosen package.
 | `java/NoteService.java.tmpl` | `src/main/java/{{.PackagePath}}/notes/service/NoteService.java` | database | 644 |
 | `java/TestcontainersConfiguration.java.tmpl` | `src/test/java/{{.PackagePath}}/TestcontainersConfiguration.java` | database | 644 |
 | `java/SecurityConfig.java.tmpl` | `src/main/java/{{.PackagePath}}/config/SecurityConfig.java` | auth | 644 |
+| `java/TestSecurityConfiguration.java.tmpl` | `src/test/java/{{.PackagePath}}/TestSecurityConfiguration.java` | auth | 644 |
 | `keycloak-realm.json.tmpl` | `environment/dev/keycloak/realm.json` | auth | 644 |
 | `java/MainViewIT.java.tmpl` | `src/test/java/{{.PackagePath}}/ui/view/MainViewIT.java` | `BrowserTests` | 644 |
 | `java/ProtectedRootIT.java.tmpl` | `src/test/java/{{.PackagePath}}/ProtectedRootIT.java` | `ProtectedRootTest` | 644 |
@@ -625,7 +626,11 @@ name, a text field and a button, a `Grid` of notes when there is a database,
 adds a message and refuses an empty one). With the database: `Note` (`@Entity`,
 `note` table, `body` and `created_at`), `NoteRepository`, `NoteService`
 (`@Transactional`, `findAllNewestFirst`, `add`) and `TestcontainersConfiguration`.
-With auth: `SecurityConfig`. With browser tests: `MainViewIT` driving Playwright
+With auth: `SecurityConfig`, and
+`TestSecurityConfiguration` — a `@TestConfiguration` declaring the OIDC client
+registration in memory, which is what stops Spring Security resolving the issuer
+over the network while a test context starts, and so what lets the tests run with
+no Keycloak up. The test classes import it. With browser tests: `MainViewIT` driving Playwright
 against a random port. With auth and e2e: `ProtectedRootIT`, which asserts that an
 anonymous request to `/` answers 302 to `/oauth2/authorization/keycloak`, and
 needs neither a browser nor a running Keycloak.

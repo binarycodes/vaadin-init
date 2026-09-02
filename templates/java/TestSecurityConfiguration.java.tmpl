@@ -1,0 +1,49 @@
+package {{.Package}};
+
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+
+/**
+ * The identity provider the tests run against: none.
+ *
+ * <p>application.properties configures the client by issuer, and Spring Security
+ * turns an issuer into a registration by fetching the provider's metadata while
+ * the context starts. That is the right configuration for the application — one
+ * property instead of six, and no endpoint layout copied by hand — and it is a
+ * network call to Keycloak before a single test has run. Without the dev stack up
+ * the context does not start at all, and the failure names a refused connection
+ * rather than a container nobody was asked to start.
+ *
+ * <p>Declaring the repository here replaces that call: Spring Boot's own
+ * registration bean stands down when the application context already has one, so
+ * the issuer is never resolved. Nothing in the test suite logs in, so these
+ * endpoints are never called — they are here because a registration is not valid
+ * without them, and they are the ones the dev stack really serves so that a test
+ * that does log in one day has somewhere to go.
+ */
+@TestConfiguration(proxyBeanMethods = false)
+public class TestSecurityConfiguration {
+
+    private static final String ISSUER = "http://localhost:8081/realms/{{.ArtifactID}}";
+
+    @Bean
+    ClientRegistrationRepository clientRegistrationRepository() {
+        return new InMemoryClientRegistrationRepository(ClientRegistration
+                .withRegistrationId("keycloak")
+                .clientId("{{.ArtifactID}}")
+                .clientSecret("dev-secret")
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .redirectUri("{baseUrl}/login/oauth2/code/{registrationId}")
+                .scope("openid", "profile", "email")
+                .authorizationUri(ISSUER + "/protocol/openid-connect/auth")
+                .tokenUri(ISSUER + "/protocol/openid-connect/token")
+                .userInfoUri(ISSUER + "/protocol/openid-connect/userinfo")
+                .userNameAttributeName("preferred_username")
+                .jwkSetUri(ISSUER + "/protocol/openid-connect/certs")
+                .build());
+    }
+}
