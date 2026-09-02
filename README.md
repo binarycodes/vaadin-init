@@ -1,8 +1,8 @@
 # vaadin-init
 
 Bootstraps an opinionated Vaadin and Spring Boot project. One binary, no
-toolchain to install first, and a TUI that asks about eight things and then writes
-a project that builds.
+toolchain to install first, and a full-screen TUI that asks about eight things on
+one page and then writes a project that builds.
 
 ```
 $ vaadin-init
@@ -10,23 +10,100 @@ $ vaadin-init
 ┃ vaadin-init v0.2.0
 ┃ An opinionated Vaadin 25 and Spring Boot 4 project.
 
-Coordinates
-What this project is called to Maven.
+╭─ Coordinates ────────────────────╮ ╭─ Identity ───────────────────────╮ ╭─ Versions ───────────────────────╮ ╭─ Stack ──────────────────────────╮
+│ What this project is called to   │ │ What this project is called to   │ │ Newest first, from Maven         │ │ The core is always generated.    │
+│ Maven.                           │ │ people.                          │ │ Central.                         │ │ These are the rest.              │
+│ ┃ Group ID                       │ │   Project name                   │ │   Vaadin version                 │ │     ✓ Database — PostgreSQL,     │
+│ ┃ Maven group, in reverse-DNS    │ │   The name that appears in the   │ │     25.2.6                       │ │   Flyway, JPA, Testcontainers,   │
+│ ┃ form.                          │ │   UI and in the task runner's    │ │     25.2.5                       │ │   dev compose                    │
+│ ┃ ❯ io.binarycodes               │ │   output.                        │ │     25.2.4                       │ │     ✓ End-to-end tests —         │
+│                                  │ │   ❯ Book Shelf                   │ │     25.2.3                       │ │   Playwright, behind an it       │
+│   Artifact ID                    │ │                                  │ │     25.2.2                       │ │   profile                        │
+│   Maven artifact. Also names     │ │   Description                    │ │     type one myself…             │ │     ✓ Coverage gate — JaCoCo,    │
+│   the directory and the          │ │   ❯ A small library              │ │                                  │ │   80% on service and presenter   │
+│   containers.                    │ │                                  │ │   Spring Boot version            │ │   packages                       │
+│   ❯ book-shelf                   │ │   Base package                   │ │     4.1.1                        │ │     ✓ Traceable builds — every   │
+│                                  │ │   Where the generated Java       │ │     4.1.0                        │ │   build must carry its commit    │
+│                                  │ │   sources live.                  │ │     4.0.8                        │ │   SHA                            │
+│                                  │ │   ❯ io.binarycodes.bookshelf     │ │     4.0.7                        │ │     · Auth — OIDC login against  │
+│                                  │ │                                  │ │     4.0.6                        │ │   Keycloak in the dev stack      │
+│                                  │ │                                  │ │     type one myself…             │ │                                  │
+│                                  │ │                                  │ │                                  │ │                                  │
+│                                  │ │                                  │ │   Java version                   │ │                                  │
+│                                  │ │                                  │ │   Spring Boot 4 needs 17 or      │ │                                  │
+│                                  │ │                                  │ │   newer.                         │ │                                  │
+│                                  │ │                                  │ │   ❯ 21                           │ │                                  │
+╰──────────────────────────────────╯ ╰──────────────────────────────────╯ ╰──────────────────────────────────╯ ╰──────────────────────────────────╯
+╭─ Output ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Created if it does not exist. Must be empty.                                                                                                       │
+│   Directory ❯ book-shelf                                                                                                                           │
+│                                                                                                                                                    │
+│     Generate                                                                                                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-┃ Group ID
-┃ Maven group, in reverse-DNS form.
-┃ ❯ io.binarycodes
-
-  Artifact ID
-  Maven artifact. Also names the directory and the containers.
-  ❯ book-shelf
-
-enter next
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+enter next · alt+1 coordinates · alt+2 identity · alt+3 versions · alt+4 stack · alt+5 output
 ```
 
-Coordinates, identity, the three versions, the stack, the output directory — one
-list per screen, because a group in huh divides a single height between its fields
-and two long lists sharing one leaves the second one unreadable. Then:
+One screen, not a queue of questions: the whole of what is about to be generated
+is in front of you before you agree to it. `alt+1` … `alt+5` jump straight to a
+section rather than walking back through the ones in between, and the bar along
+the bottom stays put — what the keys under your fingers do, then where each jump
+key goes, with the section you are in lit up.
+
+The answers derived from the coordinates — the project name, the package, the
+directory — follow them as they are typed, since both are on the screen at the
+same time and one of them being stale would be visible.
+
+A terminal too small for the boxes — roughly under 150 by 36, or 160 by 34 —
+asks one section at a time instead, with the same bar and the same jump keys, and
+`--accessible` replaces the screen entirely with plain sequential prompts for a
+screen reader.
+
+Agreeing to generate does not end the screen. The project is written from inside
+it, and the same boxes report what happened — with a log under them that takes
+whatever room is left:
+
+```
+┃ vaadin-init v0.2.0
+┃ An opinionated Vaadin 25 and Spring Boot 4 project.
+
+╭─ ✓ Book Shelf is ready ────────────────────────────────────────────────╮ ╭─ Next ─────────────────────────────────────────────────────────────────╮
+│ where    book-shelf  (22 files)                                        │ │ cd book-shelf                                                          │
+│ stack    Vaadin 25.2.6 · Spring Boot 4.1.1 · Java 21                   │ │ ./run.sh env     bring up the development stack                        │
+│ options  database · auth · e2e · coverage · traceable                  │ │ ./run.sh run     start the application                                 │
+│ git      initialised, commit-msg hook wired up                         │ │ ./run.sh verify  unit tests and integration tests                      │
+│                                                                        │ │ ./run.sh help    every task                                            │
+╰────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────────────────╯
+╭─ Log ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ run.sh test                                                                                                                                      │
+│ [INFO] Scanning for projects...                                                                                                                    │
+│ [INFO] Building book-shelf 0.0.1-SNAPSHOT                                                                                                          │
+│ [INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0                                                                                            │
+│ [INFO] BUILD SUCCESS                                                                                                                               │
+│ · done                                                                                                                                             │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ run.sh ❯ a task name                                                                                                                · quit to finish
+```
+
+The bar has become a command bar, and the log is what it writes into. Name one of
+the tasks beside it and it runs in the new project, right there: its output
+arrives in the log as it is produced, `ctrl+c` stops it — the task, not the tool —
+and the bar comes back for the next one. Starting the application is not the last
+thing this tool does; it is one of the things it does.
+
+Type `quit` — or `exit` — to finish. Not a bare enter: that is the key every
+answer on this screen was given with, and a way out that close to hand is a way
+out taken by accident.
+
+What it leaves behind is nothing. The screen goes when the program does and the
+terminal comes back exactly as it was found — no summary printed under the command
+that started it, no scrollback to clear. The modes with no screen to say it on —
+`--yes` and `--accessible` — print the summary instead, and offer the same one
+task before they go:
 
 ```
 ╭────────────────────────────────────────────────────────────╮
@@ -174,26 +251,42 @@ check each one: the pom is well-formed XML, the realm is valid JSON, no file
 carries an unresolved template value, every Java file declares the package its
 path implies, and each optional file appears exactly when its option is on.
 
-`internal/prompt`'s tests drive the whole conversation through huh's accessible
-mode, which is also what `--accessible` gives a screen reader. One of them is a
-set of layout assertions, which exist because this class of fault is silent and
-specific:
+`internal/prompt`'s tests drive the conversation two ways: through huh's accessible
+mode, which is also what `--accessible` gives a screen reader, and by stepping the
+full-screen form as a `tea.Model` at a range of terminal sizes. The second set
+exists because this class of fault is silent and specific:
 
-- a group is given a single height for the whole form and a field that does not fit
-  is quietly shrunk, so a line of prose added to a group drops the last option of
-  its list out of view;
+- everything has to be on the screen at once — a section, a version or a stack
+  option that is not visible is one nobody can check before pressing generate,
+  which is the same as never having asked;
+- the screen has to fit the terminal it is drawn in, at every size, or the layout
+  it falls back to has to be the one asking a section at a time;
+- the project has to be written without leaving the screen — same banner, same
+  boxes, same bar — since handing the terminal back mid-flow reads as the program
+  having ended and something else having started;
+- a task named in the bar has to run into the log and come back, however it ends:
+  a failure is a line in the log, and ctrl+c stops the task rather than the tool,
+  which is the difference between a screen that runs commands and one that runs
+  a command;
+- the bar has to be on the bottom row whatever is above it, and only one question
+  is ever the one being answered — a jump walks past sections, and arriving in one
+  focuses the question waiting there, so a walk that does not blur as it goes
+  lights up a field in every section it passed;
 - `huh` decides which line a list opens on inside `Options(...)`, by scanning for
   the bound value — so `Value(...)` must be chained *before* `Options(...)` or the
   list opens wherever that scan stopped;
 - `huh` opens a multi-select on the first *selected* option, so the stack list puts
   everything already on at the top; otherwise a defaults file that turns the first
-  entries off would open the list scrolled past them.
+  entries off would open the list scrolled past them;
+- a derived answer follows the coordinates only while it still holds what was
+  derived for it, so a name someone typed is never taken back.
 
-To look at the form without running it — a form is a `tea.Model`, so a frame of it
+To look at the screen without running it — it is a `tea.Model`, so a frame of it
 can be rendered anywhere:
 
 ```sh
-PREVIEW=1 go test ./internal/prompt/ -run TestPreview -v   # every group, plus the summary
+PREVIEW=1 go test ./internal/prompt/ -run TestPreview -v   # a frame at each size, plus the summary
+SIZE=132x30 PREVIEW=1 ...                                  # one terminal size
 PROFILE=ansi PREVIEW=1 ...                                 # the sixteen-colour fallback
 LIGHT=1 PREVIEW=1 ...                                      # on a light background
 ```
