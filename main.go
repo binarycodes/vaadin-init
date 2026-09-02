@@ -11,10 +11,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -155,24 +158,64 @@ func run() error {
 		cfg.BootVersion = *bootVersion
 	}
 
+	templates, err := fs.Sub(templateFS, "templates")
+	if err != nil {
+		return err
+	}
+	generator := generate.New(templates)
+	writeOptions := generate.WriteOptions{
+		Force:  *force,
+		Git:    !*noGit,
+		Commit: !*noGit && !*noCommit,
+	}
+
 	// A terminal is what makes the full-screen form possible, so without one the
 	// questions are skipped rather than asked into a pipe. --accessible is the
 	// exception: it asks in plain lines, which is exactly what works over a pipe,
 	// and asking for it is asking to be asked.
 	interactive := !*yes && (*accessible ||
 		(isatty.IsTerminal(os.Stdout.Fd()) && isatty.IsTerminal(os.Stdin.Fd())))
+
+	var session prompt.Session
+	var result generate.Result
 	if interactive {
-		// Not in accessible mode: a rule drawn down the left of two lines is
+		options := prompt.Options{Accessible: *accessible}
+		// Handed to the form rather than printed here, because the form takes
+		// over the whole terminal and anything printed before it is wiped when it
+		// does. Not in accessible mode: a rule drawn down the left of two lines is
 		// decoration, and a screen reader has to read it out before reaching the
 		// first question.
 		if !*accessible {
-			fmt.Print(ui.Banner(version,
-				strconv.Itoa(versions.VaadinMajor), strconv.Itoa(versions.BootMajor)))
+			options.Banner = ui.Banner(version,
+				strconv.Itoa(versions.VaadinMajor), strconv.Itoa(versions.BootMajor))
+
+			// The screen writes the project itself, so that what was written is
+			// reported on the screen it was asked for on. Not for a dry run, which
+			// has nothing to report, and not for a screen reader, which is being
+			// read a conversation rather than shown a screen.
+			if !*dryRun {
+				options.Task = func(ctx context.Context, task string, out io.Writer) error {
+					return streamTask(ctx, result.Root, task, out)
+				}
+				options.Generate = func(answers config.Config) (prompt.Outcome, error) {
+					if err := answers.Validate(); err != nil {
+						return prompt.Outcome{}, err
+					}
+					written, err := generator.Write(answers, writeOptions)
+					if err != nil {
+						return prompt.Outcome{}, err
+					}
+					cfg, result = answers, written
+					return outcome(answers, written), nil
+				}
+			}
 		}
-		cfg, err = prompt.Run(cfg, lookup, prompt.Options{Accessible: *accessible})
+
+		session, err = prompt.Run(cfg, lookup, options)
 		if err != nil {
 			return err
 		}
+		cfg = session.Config
 	} else {
 		// Outside the TUI the lookup still supplies the version defaults, so a
 		// scripted run and an interactive one start from the same numbers.
@@ -193,32 +236,83 @@ func run() error {
 		return err
 	}
 
-	templates, err := fs.Sub(templateFS, "templates")
-	if err != nil {
-		return err
-	}
-	generator := generate.New(templates)
-
 	if *dryRun {
 		return printDryRun(generator, cfg)
 	}
 
-	result, err := generator.Write(cfg, generate.WriteOptions{
-		Force:  *force,
-		Git:    !*noGit,
-		Commit: !*noGit && !*noCommit,
-	})
-	if err != nil {
-		return err
+	// Written already if the screen did it, which is the usual way round now.
+	// What is left here is everything with no screen to have done it on: a
+	// scripted run, and a screen reader.
+	task := session.Task
+	if !session.Written {
+		result, err = generator.Write(cfg, writeOptions)
+		if err != nil {
+			return err
+		}
+
+		// Said here because it was not said anywhere else. The screen says it on
+		// the screen, and says it there instead of here on purpose: a full-screen
+		// program that prints its summary on the way out leaves the terminal
+		// holding a copy of what the user has just finished reading, under the
+		// command they typed to start it.
+		printOutcome(outcome(cfg, result))
+
+		if interactive {
+			task, err = prompt.Task(prompt.Options{Accessible: *accessible})
+			if err != nil && !errors.Is(err, prompt.ErrCancelled) {
+				return err
+			}
+		}
 	}
-	printResult(cfg, result)
+	return runTask(result.Root, task)
+}
+
+// streamTask runs one of the new project's tasks and writes everything it says
+// to out, for the screen to put in its log.
+//
+// Stopped by cancelling the context, which signals the task's whole process
+// group rather than the script at the top of it. A couple of seconds to go
+// quietly — a build being stopped has a lock to release and a message to print —
+// and then whatever is still standing is taken down, because the screen cannot
+// have its bar back until the last thing holding the output pipe lets go.
+func streamTask(ctx context.Context, root, task string, out io.Writer) error {
+	command := exec.CommandContext(ctx, "./run.sh", strings.Fields(task)...)
+	command.Dir = root
+	command.Stdout, command.Stderr = out, out
+	command.Cancel = func() error { return interrupt(command) }
+	command.WaitDelay = 2 * time.Second
+	group(command)
+
+	err := command.Run()
+	if ctx.Err() != nil {
+		// A task the user stopped is not a task that failed — but it is a task
+		// that has to be gone, children and all.
+		finish(command)
+		return nil
+	}
+	return err
+}
+
+// runTask hands the terminal to the new project, if a task was named.
+//
+// Nothing to do on Windows, where run.sh needs a shell that platform does not
+// ship — the command bar is not offered there either.
+func runTask(root, task string) error {
+	if task == "" || runtime.GOOS == "windows" {
+		return nil
+	}
+
+	// Run in the project rather than told to the user, and with this process's
+	// own streams, so that a server keeps the terminal and ctrl+c reaches it.
+	command := exec.Command("./run.sh", strings.Fields(task)...)
+	command.Dir = root
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("./run.sh %s: %w", task, err)
+	}
 	return nil
 }
 
-// preParse reads the flags that change how the rest of the flags are defined.
-//
-// It parses a copy so that an unknown flag here is not an error: the real parse
-// has the full set and is the one entitled to complain about a typo.
 func preParse(flags *flag.FlagSet, args []string) error {
 	quiet := flag.NewFlagSet("pre", flag.ContinueOnError)
 	quiet.SetOutput(discard{})
@@ -306,7 +400,11 @@ func displayPath(path string) string {
 	return relative
 }
 
-func printResult(cfg config.Config, result generate.Result) {
+// outcome is what there is to say about a project that has just been written.
+//
+// Built apart from being printed because it is now said twice: once by the screen
+// the project was asked for on, and once into the scrollback that outlives it.
+func outcome(cfg config.Config, result generate.Result) prompt.Outcome {
 	options := "none — core only"
 	if on := cfg.Selected(); len(on) > 0 {
 		options = ui.Join(on...)
@@ -324,18 +422,6 @@ func printResult(cfg config.Config, result generate.Result) {
 		git = ui.Join(parts...)
 	}
 
-	rows := []ui.Row{
-		{Label: "where", Value: fmt.Sprintf("%s  (%d files)", displayPath(result.Root), len(result.Paths))},
-		{Label: "stack", Value: ui.Join(
-			"Vaadin "+cfg.VaadinVersion,
-			"Spring Boot "+cfg.BootVersion,
-			"Java "+cfg.JavaVersion)},
-		{Label: "options", Value: options},
-		{Label: "git", Value: git},
-	}
-
-	fmt.Print(ui.Summary(cfg.ProjectName+" is ready", rows, result.GitMessage))
-
 	steps := []ui.Step{{Command: "cd " + displayPath(result.Root)}}
 	if cfg.ContainerRequired() {
 		steps = append(steps, ui.Step{Command: "./run.sh env", Purpose: "bring up the development stack"})
@@ -350,8 +436,26 @@ func printResult(cfg config.Config, result generate.Result) {
 	}
 	steps = append(steps, ui.Step{Command: "./run.sh help", Purpose: "every task"})
 
+	return prompt.Outcome{
+		Title: cfg.ProjectName + " is ready",
+		Rows: []ui.Row{
+			{Label: "where", Value: fmt.Sprintf("%s  (%d files)", displayPath(result.Root), len(result.Paths))},
+			{Label: "stack", Value: ui.Join(
+				"Vaadin "+cfg.VaadinVersion,
+				"Spring Boot "+cfg.BootVersion,
+				"Java "+cfg.JavaVersion)},
+			{Label: "options", Value: options},
+			{Label: "git", Value: git},
+		},
+		Notice: result.GitMessage,
+		Steps:  steps,
+	}
+}
+
+func printOutcome(o prompt.Outcome) {
+	fmt.Print(ui.Summary(o.Title, o.Rows, o.Notice))
 	fmt.Println()
-	fmt.Print(ui.NextSteps("Next", steps))
+	fmt.Print(ui.NextSteps("Next", o.Steps))
 	fmt.Println()
 }
 

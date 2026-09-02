@@ -9,10 +9,12 @@ package prompt
 import (
 	"bufio"
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 
@@ -44,6 +46,29 @@ type VersionSource func() versions.Available
 // a pom.xml even if the resolving below were ever skipped.
 const custom = "\x00type-one-myself"
 
+// Outcome is what there is to say once a project has been written: the same
+// summary the tool leaves in the scrollback, ready to be shown inside the screen
+// that asked for it.
+type Outcome struct {
+	Title  string
+	Rows   []ui.Row
+	Notice string
+	Steps  []ui.Step
+}
+
+// Session is what the conversation came to.
+type Session struct {
+	Config config.Config
+
+	// Written says the project was generated before the screen closed, which is
+	// what makes the summary and the command bar part of the same screen rather
+	// than something printed after it.
+	Written bool
+
+	// Task is the run.sh task named in the command bar, or empty for none.
+	Task string
+}
+
 // Options are the ways the conversation itself can be run.
 type Options struct {
 	// Accessible replaces the full-screen form with plain sequential prompts
@@ -51,6 +76,31 @@ type Options struct {
 	// so without this the tool is unusable with one — and the same mode is what
 	// lets the prompt flow be driven from a script or a test.
 	Accessible bool
+
+	// Banner is what the full-screen form prints above the questions. Passed in
+	// rather than built here because it names the tool's own version, which this
+	// package has no business knowing — and it is drawn inside the form's screen
+	// because a full-screen form replaces whatever was printed before it.
+	Banner string
+
+	// Generate writes the project, and says what to show about it.
+	//
+	// Injected rather than called by the caller afterwards, because the screen
+	// does not end when the questions do: the answers become a project, and the
+	// summary and the command bar that follow are drawn in the same full-screen
+	// layout the questions were asked in. Left nil — a dry run, or a screen
+	// reader — the conversation ends at the last question, as it used to.
+	Generate func(config.Config) (Outcome, error)
+
+	// Task runs one of the generated project's tasks, writing everything it says
+	// to out, and stops when the context is cancelled.
+	//
+	// Injected for the same reason as Generate, and needed for the same reason:
+	// the screen does not end when the project is written. A task named in the
+	// command bar runs from inside it and its output lands in the log, so the
+	// tool is still the thing on the terminal — starting a task cannot be the
+	// last thing it does.
+	Task func(ctx context.Context, task string, out io.Writer) error
 
 	// Input and Output override the terminal. Left nil they are the real one;
 	// a test sets them, which is the only way to drive this flow without a
@@ -177,13 +227,27 @@ func (t typedVersions) resolve(c *config.Config, vaadinFallback, bootFallback st
 
 // Run asks the questions, seeded from c, and returns the answers.
 //
+// Two conversations, not one. The full-screen form puts every section on one
+// screen, where an answer derived from the coordinates can follow them as they
+// are typed; a screen reader cannot be shown a screen, so that mode keeps asking
+// one question at a time and re-derives between two forms instead.
+func Run(c config.Config, lookup VersionSource, options Options) (Session, error) {
+	options = options.prepared()
+	if options.Accessible {
+		c, err := runAccessible(c, lookup, options)
+		return Session{Config: c}, err
+	}
+	return runScreen(c, lookup, options)
+}
+
+// runAccessible asks the questions as plain sequential prompts.
+//
 // The questions come in two forms rather than one because the second form's
 // defaults are derived from the first form's answers: the project name, the
 // package and the output directory all follow from the coordinates, and huh
 // binds a field's initial value when the form is built, not when the field is
 // reached.
-func Run(c config.Config, lookup VersionSource, options Options) (config.Config, error) {
-	options = options.prepared()
+func runAccessible(c config.Config, lookup VersionSource, options Options) (config.Config, error) {
 	theme := ui.Theme()
 
 	coordinates := coordinatesForm(&c, theme, options)
@@ -199,16 +263,13 @@ func Run(c config.Config, lookup VersionSource, options Options) (config.Config,
 	c.OutputDir = c.ArtifactID
 
 	available := lookup()
-	vaadinList := withFallback(available.Vaadin, c.VaadinVersion)
-	bootList := withFallback(available.Boot, c.BootVersion)
-	c.VaadinVersion = vaadinList[0]
-	c.BootVersion = bootList[0]
+	c.VaadinVersion = withFallback(available.Vaadin, c.VaadinVersion)[0]
+	c.BootVersion = withFallback(available.Boot, c.BootVersion)[0]
 
 	features := selectedFeatures(c)
 	confirmed := true
-	var typed typedVersions
 
-	rest := restForm(&c, &features, &confirmed, &typed, available, vaadinList, bootList, theme, options)
+	rest := restForm(&c, &features, &confirmed, available, theme, options)
 
 	if err := rest.Run(); err != nil {
 		return c, cancelled(err)
@@ -217,9 +278,58 @@ func Run(c config.Config, lookup VersionSource, options Options) (config.Config,
 		return c, ErrCancelled
 	}
 
-	typed.resolve(&c, vaadinList[0], bootList[0])
 	applyFeatures(&c, features)
 	return c, nil
+}
+
+// Leaving reports whether what was typed into the command bar means "nothing,
+// thanks" rather than the name of a task.
+//
+// A word, not an empty line. The bar is a prompt like any other and enter is the
+// key everything else on this screen is agreed to with, so a bare enter meaning
+// "we are done here" is a way to leave by accident — and the way back is to run
+// the tool again and answer every question a second time.
+func Leaving(task string) bool {
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "quit", "exit":
+		return true
+	}
+	return false
+}
+
+// Task asks which of the generated project's tasks to run next.
+//
+// What the bar along the bottom of the screen turns into once there is a project:
+// the tool has just listed the tasks, and the next thing anyone does is type one
+// of them — so it is asked for here rather than left to be retyped after a `cd`.
+//
+// Unlike the bar, an empty answer is taken as "none, thanks" here: this is the
+// version read out to a screen reader, where every question so far has been
+// answered by pressing enter to accept what was offered, and answering one more
+// the same way should not be the one that means something else.
+func Task(options Options) (string, error) {
+	options = options.prepared()
+
+	var task string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				// Two carets, so the line reads as a command being built: the
+				// tool's prompt, the script that will run, and the part left to
+				// type.
+				Prompt(ui.Caret + "run.sh " + ui.Caret).
+				Placeholder("a task name, or quit to finish").
+				Value(&task),
+		),
+	).WithTheme(ui.Theme()).WithShowHelp(false)
+
+	if err := options.apply(form).Run(); err != nil {
+		return "", cancelled(err)
+	}
+	if Leaving(task) {
+		return "", nil
+	}
+	return strings.TrimSpace(task), nil
 }
 
 // cancelled maps huh's abort to this package's own, so the caller does not have
@@ -254,107 +364,59 @@ func withFallback(list []string, fallback string) []string {
 // avoid.
 func versionNote(fetched []string) string {
 	if len(fetched) > 0 {
-		return "Released versions, newest first, from Maven Central."
+		// Nothing: where the list came from is said once, by the section, and a
+		// line of prose repeated over each list is a line the lists do not get.
+		return ""
 	}
 	return "Maven Central could not be reached — this is the built-in default, which may be out of date."
 }
 
-// versionGroups asks for the two framework versions.
+// versionGroup asks for the versions in accessible mode: plain inputs,
+// pre-filled with the newest release.
 //
-// A list to pick from in the normal case, with an escape hatch for a version the
-// lookup did not offer: choosing "type one myself" leaves the value empty, and a
-// group that is hidden unless the value is empty then asks for it.
-//
-// Accessible mode gets plain inputs pre-filled with the newest release instead.
-// Not a simplification for its own sake: huh asks a hidden group's questions
-// anyway in accessible mode, so the select-plus-follow-up shape would ask for
-// each version twice. An input already offers a default to accept or type over,
-// which is the whole of what the select was buying.
-func versionGroups(
-	c *config.Config,
-	typed *typedVersions,
-	available versions.Available,
-	vaadinList, bootList []string,
-	options Options,
-) []*huh.Group {
-	if options.Accessible {
-		return []*huh.Group{
-			huh.NewGroup(
-				huh.NewInput().
-					Prompt(ui.Caret).
-					Title("Vaadin version").
-					Description(versionNote(available.Vaadin)).
-					Value(&c.VaadinVersion).
-					Validate(options.validator(config.ValidVersion)),
-				huh.NewInput().
-					Prompt(ui.Caret).
-					Title("Spring Boot version").
-					Description(versionNote(available.Boot)).
-					Value(&c.BootVersion).
-					Validate(options.validator(config.ValidVersion)),
-				javaVersionInput(c, options),
-			).Title("Versions").
-				Description("Pinned in pom.xml, and in run.conf for the task runner."),
-		}
-	}
-
-	// A group is given one height for the whole form and its fields divide it, so
-	// each list gets a group of its own. Together they left the second list
-	// showing two of its options on a 24-row terminal, and a list nobody can see
-	// is a list nobody can choose from.
-	return []*huh.Group{
-		// One question each, and all three under the same section heading: with a
-		// single field per group, a group title would only repeat the field's own.
-		huh.NewGroup(
-			versionSelect("Vaadin version", versionNote(available.Vaadin), vaadinList, &c.VaadinVersion),
-		).Title("Versions"),
-
-		huh.NewGroup(
-			versionSelect("Spring Boot version", versionNote(available.Boot), bootList, &c.BootVersion),
-		).Title("Versions"),
-
-		huh.NewGroup(
-			javaVersionInput(c, options),
-		).Title("Versions"),
-
-		// Reached only when a select was left on "type one myself". Bound to its
-		// own field rather than to the version itself, so it opens empty and the
-		// select's answer stays readable as the sentinel it is.
-		huh.NewGroup(
-			huh.NewInput().
-				Prompt(ui.Caret).
-				Title("Vaadin version").
-				Description("A version Maven Central did not offer.").
-				Value(&typed.vaadin).
-				Validate(config.ValidVersion),
-		).WithHideFunc(func() bool { return c.VaadinVersion != custom }),
-		huh.NewGroup(
-			huh.NewInput().
-				Prompt(ui.Caret).
-				Title("Spring Boot version").
-				Description("A version Maven Central did not offer.").
-				Value(&typed.boot).
-				Validate(config.ValidVersion),
-		).WithHideFunc(func() bool { return c.BootVersion != custom }),
-	}
+// No select and no escape hatch, because huh asks a hidden group's questions
+// anyway in accessible mode, so the select-plus-follow-up shape the screen uses
+// would ask for each version twice. An input already offers a default to accept
+// or type over, which is the whole of what the select was buying.
+func versionGroup(c *config.Config, available versions.Available, options Options) *huh.Group {
+	return huh.NewGroup(
+		huh.NewInput().
+			Prompt(ui.Caret).
+			Title("Vaadin version").
+			Description(versionNote(available.Vaadin)).
+			Value(&c.VaadinVersion).
+			Validate(options.validator(config.ValidVersion)),
+		huh.NewInput().
+			Prompt(ui.Caret).
+			Title("Spring Boot version").
+			Description(versionNote(available.Boot)).
+			Value(&c.BootVersion).
+			Validate(options.validator(config.ValidVersion)),
+		javaVersionInput(c, options),
+	).Title("Versions").
+		Description("Pinned in pom.xml, and in run.conf for the task runner.")
 }
 
 func javaVersionInput(c *config.Config, options Options) *huh.Input {
 	return huh.NewInput().
 		Prompt(ui.Caret).
 		Title("Java version").
-		Description(fmt.Sprintf("The JDK the build pins. Spring Boot %d needs 17 or newer.", versions.BootMajor)).
+		Description(fmt.Sprintf("Spring Boot %d needs 17 or newer.", versions.BootMajor)).
 		Value(&c.JavaVersion).
 		Validate(options.validator(config.ValidJavaVersion))
 }
 
-func versionSelect(title, description string, list []string, value *string) *huh.Select[string] {
+// versionOptions is a version list as a select's options, with the escape hatch
+// last.
+func versionOptions(list []string) []huh.Option[string] {
 	options := make([]huh.Option[string], 0, len(list)+1)
 	for _, v := range list {
 		options = append(options, huh.NewOption(v, v))
 	}
-	options = append(options, huh.NewOption("type one myself…", custom))
+	return append(options, huh.NewOption("type one myself…", custom))
+}
 
+func versionSelect(title, description string, list []string, value *string) *huh.Select[string] {
 	// Value before Options, not after: Options is what scans for the bound value
 	// to decide which line the cursor opens on, so a value set afterwards arrives
 	// too late and the list opens wherever that scan happened to stop.
@@ -362,7 +424,7 @@ func versionSelect(title, description string, list []string, value *string) *huh
 		Title(title).
 		Description(description).
 		Value(value).
-		Options(options...)
+		Options(versionOptions(list)...)
 }
 
 // The optional stack pieces, in the order they are offered. Held as data so the
@@ -452,99 +514,245 @@ func applyFeatures(c *config.Config, keys []string) {
 	}
 }
 
-// coordinatesForm is the first form: the two answers everything else is derived
-// from.
+// The questions, one constructor each, so that the full-screen form and the
+// accessible one ask the same thing in the same words and cannot drift apart.
+
+func groupIDInput(c *config.Config, options Options) *huh.Input {
+	return huh.NewInput().
+		Prompt(ui.Caret).
+		Title("Group ID").
+		Description("Maven group, in reverse-DNS form.").
+		Value(&c.GroupID).
+		Validate(options.validator(config.ValidGroupID))
+}
+
+func artifactIDInput(c *config.Config, options Options) *huh.Input {
+	return huh.NewInput().
+		Prompt(ui.Caret).
+		Title("Artifact ID").
+		Description("Maven artifact. Also names the directory and the containers.").
+		Value(&c.ArtifactID).
+		Validate(options.validator(config.ValidArtifactID))
+}
+
+func projectNameInput(c *config.Config, options Options) *huh.Input {
+	return huh.NewInput().
+		Prompt(ui.Caret).
+		Title("Project name").
+		Description("The name that appears in the UI and in the task runner's output.").
+		Value(&c.ProjectName).
+		Validate(options.validator(config.ValidProjectName))
+}
+
+func descriptionInput(c *config.Config) *huh.Input {
+	return huh.NewInput().
+		Prompt(ui.Caret).
+		Title("Description").
+		Value(&c.Description)
+}
+
+func packageInput(c *config.Config, options Options) *huh.Input {
+	return huh.NewInput().
+		Prompt(ui.Caret).
+		Title("Base package").
+		Description("Where the generated Java sources live.").
+		Value(&c.Package).
+		Validate(options.validator(config.ValidPackage))
+}
+
+// stackSelect asks which of the optional pieces to generate.
+//
+// The title is the caller's because it is only worth a row where the question is
+// not already introduced: on the full-screen form the section above it says
+// "Stack", and saying it twice costs a line of the list.
+func stackSelect(c *config.Config, features *[]string, title string) *huh.MultiSelect[string] {
+	rows := len(featureList)
+	if title != "" {
+		rows++
+	}
+	return huh.NewMultiSelect[string]().
+		Title(title).
+		// Value before Options, for the reason given in versionSelect.
+		Value(features).
+		Options(featureOptions(*c)...).
+		// Every option, plus the row the field's title takes out of the same
+		// budget. This height is the whole list's window, not a minimum: one row
+		// short and the last option is only reachable by scrolling, with nothing
+		// on screen to say it is there.
+		//
+		// The field carries no description for the same reason — a line of prose
+		// here is a line the list does not get — and the help footer already says
+		// "x toggle • enter confirm".
+		Height(rows)
+}
+
+// directoryInput asks where to write the project.
+//
+// Inline — the question and the answer on one line — because on the screen this
+// has a row the width of the terminal to itself, and a row that wide spent on a
+// title, a line of prose and a short path reads as three rows of nothing.
+func directoryInput(c *config.Config, options Options, inline bool) *huh.Input {
+	input := huh.NewInput().
+		Prompt(ui.Caret).
+		Title("Directory ").
+		Inline(inline).
+		Value(&c.OutputDir).
+		Validate(options.validator(notEmpty))
+	if inline {
+		// The section above it says the rest. On one line, a description sits
+		// between the question and the answer, which is the one place it cannot
+		// be read as belonging to either.
+		return input
+	}
+	return input.Description("Created if it does not exist. Must be empty.")
+}
+
+// typedVersionInput is the escape hatch: a version Maven Central did not offer.
+//
+// Bound to a field of its own rather than to the version itself, so it opens
+// empty and the select's answer stays readable as the sentinel it is.
+func typedVersionInput(title string, value *string) *huh.Input {
+	return huh.NewInput().
+		Prompt(ui.Caret).
+		Title(title).
+		Description("A version Maven Central did not offer.").
+		Value(value).
+		Validate(config.ValidVersion)
+}
+
+// fields are the questions the full-screen form has to reach back into once it
+// is built: the coordinates everything else follows from, the answers that
+// follow them, and the two lists the version lookup fills in when it lands.
+type fields struct {
+	projectName *huh.Input
+	pkg         *huh.Input
+	directory   *huh.Input
+	vaadin      *huh.Select[string]
+	boot        *huh.Select[string]
+}
+
+// spanning is a section with a row of its own under the columns, the width of
+// the screen.
+func spanning(title, description string, fields ...huh.Field) section {
+	s := newSection(title, description, nil, fields...)
+	s.span = true
+	return s
+}
+
+// sections is the whole conversation as the columns of one screen, in the order
+// they are read across.
+//
+// The two escape hatches come last and are hidden until a version select is left
+// on "type one myself", so they cost nothing on the screen until they are asked
+// for — and, being last, the numbered sections in front of them keep their
+// numbers when they appear.
+func newSections(
+	c *config.Config,
+	f *fields,
+	features *[]string,
+	confirmed *bool,
+	typed *typedVersions,
+	available versions.Available,
+	options Options,
+) []section {
+	f.projectName = projectNameInput(c, options)
+	f.pkg = packageInput(c, options)
+	f.directory = directoryInput(c, options, true)
+	f.vaadin = versionSelect("Vaadin version", versionNote(available.Vaadin),
+		withFallback(available.Vaadin, c.VaadinVersion), &c.VaadinVersion)
+	f.boot = versionSelect("Spring Boot version", versionNote(available.Boot),
+		withFallback(available.Boot, c.BootVersion), &c.BootVersion)
+
+	return []section{
+		newSection("Coordinates", "What this project is called to Maven.", nil,
+			groupIDInput(c, options),
+			artifactIDInput(c, options)),
+
+		newSection("Identity", "What this project is called to people.", nil,
+			f.projectName,
+			descriptionInput(c),
+			f.pkg),
+
+		newSection("Versions", "Newest first, from Maven Central.", nil,
+			f.vaadin,
+			f.boot,
+			javaVersionInput(c, options)),
+
+		newSection("Stack", "The core is always generated. These are the rest.", nil,
+			stackSelect(c, features, "")),
+
+		// Under everything rather than beside it: where the project goes is the
+		// last thing decided about it, and the button that starts the whole
+		// thing follows every answer above it rather than sitting at the foot of
+		// whichever column it happened to land in.
+		spanning("Output", "Created if it does not exist. Must be empty.",
+			f.directory,
+			// One button, not two. The other one is every other way out of this
+			// screen — ctrl+c, or never having run it — and a No beside the
+			// Generate reads as a decision that has to be made rather than the
+			// one that has already been made by filling the form in.
+			huh.NewConfirm().
+				Affirmative("Generate").
+				Negative("").
+				Value(confirmed)),
+
+		newSection("Vaadin version", "Typed, not offered.",
+			func() bool { return c.VaadinVersion != custom },
+			typedVersionInput("Vaadin version", &typed.vaadin)),
+
+		newSection("Spring Boot version", "Typed, not offered.",
+			func() bool { return c.BootVersion != custom },
+			typedVersionInput("Spring Boot version", &typed.boot)),
+	}
+}
+
+// coordinatesForm is the first of the two accessible forms: the two answers
+// everything else is derived from.
 //
 // Built apart from being run so that the appearance can be rendered — and
 // reviewed — without a terminal to run it in.
 func coordinatesForm(c *config.Config, theme *huh.Theme, options Options) *huh.Form {
 	form := huh.NewForm(
 		huh.NewGroup(
-			huh.NewInput().
-				Prompt(ui.Caret).
-				Title("Group ID").
-				Description("Maven group, in reverse-DNS form.").
-				Value(&c.GroupID).
-				Validate(options.validator(config.ValidGroupID)),
-			huh.NewInput().
-				Prompt(ui.Caret).
-				Title("Artifact ID").
-				Description("Maven artifact. Also names the directory and the containers.").
-				Value(&c.ArtifactID).
-				Validate(options.validator(config.ValidArtifactID)),
+			groupIDInput(c, options),
+			artifactIDInput(c, options),
 		).Title("Coordinates").
 			Description("What this project is called to Maven."),
 	)
 	return options.apply(form.WithTheme(theme).WithShowHelp(true))
 }
 
-// restForm is everything after the coordinates, in the order it is asked.
+// restForm is everything the accessible conversation asks after the
+// coordinates, in the order it is asked.
 func restForm(
 	c *config.Config,
 	features *[]string,
 	confirmed *bool,
-	typed *typedVersions,
 	available versions.Available,
-	vaadinList, bootList []string,
 	theme *huh.Theme,
 	options Options,
 ) *huh.Form {
-	groups := []*huh.Group{
+	form := huh.NewForm(
 		huh.NewGroup(
-			huh.NewInput().
-				Prompt(ui.Caret).
-				Title("Project name").
-				Description("The name that appears in the UI and in the task runner's output.").
-				Value(&c.ProjectName).
-				Validate(options.validator(config.ValidProjectName)),
-			huh.NewInput().
-				Prompt(ui.Caret).
-				Title("Description").
-				Value(&c.Description),
-			huh.NewInput().
-				Prompt(ui.Caret).
-				Title("Base package").
-				Description("Where the generated Java sources live.").
-				Value(&c.Package).
-				Validate(options.validator(config.ValidPackage)),
+			projectNameInput(c, options),
+			descriptionInput(c),
+			packageInput(c, options),
 		).Title("Identity").
 			Description("What this project is called to people."),
-	}
 
-	groups = append(groups, versionGroups(c, typed, available, vaadinList, bootList, options)...)
+		versionGroup(c, available, options),
 
-	groups = append(groups,
 		huh.NewGroup(
-			huh.NewMultiSelect[string]().
-				Title("Stack").
-				// Value before Options, for the reason given in versionSelect.
-				Value(features).
-				Options(featureOptions(*c)...).
-				// Every option, plus the row the field's title takes out of the
-				// same budget. This height is the whole list's window, not a
-				// minimum: one row short and the last option is only reachable by
-				// scrolling, with nothing on screen to say it is there.
-				//
-				// The field carries no description for the same reason — a line of
-				// prose here is a line the list does not get — and the help footer
-				// already says "x toggle • enter confirm".
-				Height(len(featureList)+1),
+			stackSelect(c, features, "Stack"),
 		).Title("Stack").
 			Description("The core is always generated. These are the rest."),
 
 		huh.NewGroup(
-			huh.NewInput().
-				Prompt(ui.Caret).
-				Title("Directory").
-				Description("Created if it does not exist. Must be empty.").
-				Value(&c.OutputDir).
-				Validate(options.validator(notEmpty)),
+			directoryInput(c, options, false),
 			huh.NewConfirm().
 				Title("Generate?").
 				Value(confirmed),
 		).Title("Output"),
 	)
-
-	form := huh.NewForm(groups...)
 	return options.apply(form.WithTheme(theme).WithShowHelp(true))
 }

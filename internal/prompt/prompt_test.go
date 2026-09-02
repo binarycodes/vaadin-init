@@ -42,11 +42,12 @@ func offered() VersionSource {
 // mode — which is the only way to exercise the prompts without a terminal.
 func run(t *testing.T, answers string) (config.Config, error) {
 	t.Helper()
-	return Run(seed(), offered(), Options{
+	session, err := Run(seed(), offered(), Options{
 		Accessible: true,
 		Input:      strings.NewReader(answers),
 		Output:     io.Discard,
 	})
+	return session.Config, err
 }
 
 // A blank line accepts what a field already shows, so this is the path of
@@ -221,5 +222,39 @@ func TestSentinelIsNotAValidVersion(t *testing.T) {
 	}
 	if custom == "" {
 		t.Error("an empty sentinel collides with the zero value of the field it sits beside")
+	}
+}
+
+// The command bar takes a task name and hands it back, trimmed.
+func TestTheCommandBarTakesATaskName(t *testing.T) {
+	got, err := Task(Options{
+		Accessible: true,
+		Input:      strings.NewReader("  verify  \n"),
+		Output:     io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if got != "verify" {
+		t.Errorf("task = %q, want the name that was typed", got)
+	}
+}
+
+// Read out to a screen reader, the bar is one more question in a conversation
+// where enter has meant "that is fine" every time, so a bare enter is taken the
+// same way — as is saying so.
+func TestTheCommandBarTakesNoAnswer(t *testing.T) {
+	for _, answer := range []string{"\n", "quit\n", "exit\n"} {
+		got, err := Task(Options{
+			Accessible: true,
+			Input:      strings.NewReader(answer),
+			Output:     io.Discard,
+		})
+		if err != nil {
+			t.Fatalf("Task(%q): %v", answer, err)
+		}
+		if got != "" {
+			t.Errorf("task = %q for %q, want nothing", got, answer)
+		}
 	}
 }

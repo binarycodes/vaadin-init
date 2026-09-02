@@ -3,22 +3,22 @@ package prompt
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
-	"github.com/binarycodes/vaadin-init/internal/config"
 	"github.com/binarycodes/vaadin-init/internal/ui"
 	"github.com/binarycodes/vaadin-init/internal/versions"
 )
 
-// TestPreview prints the form as it will appear, one group at a time.
+// TestPreview prints the screen as it will appear, at a few terminal sizes.
 //
-// A form is a tea.Model, so a frame of it can be rendered without a terminal to
-// run it in — which is the only way to review how this looks from a place that
+// The screen is a tea.Model, so a frame of it can be rendered without a terminal
+// to run it in — which is the only way to review how this looks from a place that
 // has no terminal, and the only way to see a styling change in a diff-able form.
 //
 // Skipped by default because it asserts nothing; run it to look:
@@ -26,7 +26,7 @@ import (
 //	CLICOLOR_FORCE=1 PREVIEW=1 go test ./internal/prompt/ -run TestPreview -v
 func TestPreview(t *testing.T) {
 	if os.Getenv("PREVIEW") == "" {
-		t.Skip("set PREVIEW=1 to print the rendered form")
+		t.Skip("set PREVIEW=1 to print the rendered screen")
 	}
 
 	// Stated rather than detected: there is no terminal here to detect, and the
@@ -40,42 +40,62 @@ func TestPreview(t *testing.T) {
 	lipgloss.SetColorProfile(profile)
 	lipgloss.SetHasDarkBackground(os.Getenv("LIGHT") == "")
 
-	c := seed()
-	theme := ui.Theme()
-	available := offered().Value()
-
-	forms := []struct {
-		name string
-		form *huh.Form
-	}{
-		{"coordinates", coordinatesForm(&c, theme, Options{})},
+	sizes := []struct{ width, height int }{
+		{160, 40},
+		{140, 32},
+		{120, 30},
+		{100, 24},
+		{80, 24},
+	}
+	if only := os.Getenv("SIZE"); only != "" {
+		width, height, _ := strings.Cut(only, "x")
+		w, _ := strconv.Atoi(width)
+		h, _ := strconv.Atoi(height)
+		sizes = sizes[:0]
+		sizes = append(sizes, struct{ width, height int }{w, h})
 	}
 
-	features := selectedFeatures(c)
-	confirmed := true
-	rest := restForm(&c, &features, &confirmed, &typedVersions{}, available,
-		available.Vaadin, available.Boot, theme, Options{})
-
-	fmt.Print(ui.Banner("v0.1.0", "25", "4"))
-
-	for _, f := range forms {
-		fmt.Println(frame(f.form))
+	for _, size := range sizes {
+		s := preview(size.width, size.height)
+		fmt.Printf("\n\n%s\n", strings.Repeat("─", size.width))
+		fmt.Printf("%dx%d — tiled: %v\n\n", size.width, size.height, s.columns)
+		fmt.Println(s.View())
 	}
 
-	// The second form holds several groups and shows one at a time, so each is
-	// rendered and then advanced past.
-	//
-	// Initialised once, outside the loop: re-initialising between frames makes
-	// the form redistribute the window height each time and progressively shrink
-	// the field it is showing, which looks exactly like a list dropping its last
-	// option and is a fault in this harness rather than in the form.
-	start(rest)
-	for i := 0; i < 7; i++ {
-		fmt.Println(rest.View())
-		rest.NextGroup()
+	// The same screen once there is a project on the other end of it.
+	done := preview(sizes[0].width, sizes[0].height)
+	done.outcome = Outcome{
+		Title: "Note Harbor is ready",
+		Rows: []ui.Row{
+			{Label: "where", Value: "/home/dev/note-harbor  (22 files)"},
+			{Label: "stack", Value: ui.Join("Vaadin 25.2.6", "Spring Boot 4.1.1", "Java 21")},
+			{Label: "options", Value: ui.Join("database", "auth", "e2e", "coverage", "traceable builds")},
+			{Label: "git", Value: "initialised, commit-msg hook wired up"},
+		},
+		Steps: []ui.Step{
+			{Command: "cd note-harbor"},
+			{Command: "./run.sh env", Purpose: "bring up the development stack"},
+			{Command: "./run.sh run", Purpose: "start the application"},
+			{Command: "./run.sh verify", Purpose: "unit tests and integration tests"},
+			{Command: "./run.sh help", Purpose: "every task"},
+		},
 	}
+	done.phase = written
+	done.command.Focus()
+	// A task that has been run, so the log is showing what it said.
+	done.log = []string{
+		ui.Echoed("run.sh test"),
+		"[INFO] Scanning for projects...",
+		"[INFO] Building note-harbor 0.0.1-SNAPSHOT",
+		"[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0",
+		"[INFO] BUILD SUCCESS",
+		ui.Finished("done"),
+	}
+	fmt.Printf("\n\n%s\n", strings.Repeat("─", sizes[0].width))
+	fmt.Printf("%dx%d — written\n\n", sizes[0].width, sizes[0].height)
+	fmt.Println(done.View())
 
-	// What the tool prints after the form is part of the same look, so it is
+	// What the tool prints after the screen is part of the same look, so it is
 	// reviewed in the same place.
 	fmt.Print(ui.Summary("Note Harbor is ready", []ui.Row{
 		{Label: "where", Value: "/home/dev/note-harbor  (22 files)"},
@@ -107,20 +127,16 @@ func TestPreview(t *testing.T) {
 	}))
 }
 
-// start brings a form up as a terminal would: initialise it, then tell it the
-// size of the window it has to lay out in.
-func start(form *huh.Form) {
-	form.Init()
-	form.Update(tea.WindowSizeMsg{Width: 96, Height: 24})
+// preview brings a screen up as a terminal would: build it, hand it the
+// versions the lookup would have found, and tell it the size of the window.
+func preview(width, height int) *screen {
+	c := seed()
+	s := newScreen(&c, offered(), Options{
+		Banner: ui.Banner("v0.1.0",
+			strconv.Itoa(versions.VaadinMajor), strconv.Itoa(versions.BootMajor)),
+	})
+	s.Init()
+	s.Update(versionsMsg(fetched()))
+	s.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	return s
 }
-
-// frame renders one still of a form.
-func frame(form *huh.Form) string {
-	start(form)
-	return form.View()
-}
-
-// Value makes a VersionSource readable as the value it produces.
-func (s VersionSource) Value() versions.Available { return s() }
-
-var _ = config.Config{}
