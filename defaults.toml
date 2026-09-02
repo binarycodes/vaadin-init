@@ -30,7 +30,7 @@ boot_version = "4.1.1"
 # not listed because it is not optional.
 [features]
 database = true   # PostgreSQL, Flyway, JPA, Testcontainers, a dev compose file
-auth = false      # OIDC login against Keycloak in the dev stack
+auth = true      # OIDC login against Keycloak in the dev stack
 e2e = true        # Playwright browser tests behind an `it` profile
 coverage = true   # JaCoCo with a gate on the service and presenter packages
-traceable = true  # every build must carry the commit SHA it was built from
+traceable = false  # every build must carry the commit SHA it was built from
