@@ -547,8 +547,9 @@ smoke test that builds the binary and runs `--version` and
 
 11.3 `generated project` — twice, once with everything off and once with
 everything on: generate with `--yes`, assert the project committed itself and has
-a clean working tree, then build and test it through `./run.sh test` with Temurin
-21. Surefire reports are kept on failure.
+a clean working tree, then install Temurin 21 with the Maven cache keyed on the
+generated pom, and build and test it through `./run.sh test`. Surefire reports are
+kept on failure.
 
 ## 12. The generated project
 

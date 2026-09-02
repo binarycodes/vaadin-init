@@ -117,14 +117,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Matches the JDK the generated pom pins. run.sh looks for the configured
-      # JDK under ~/.sdkman and falls back to JAVA_HOME, which this sets.
-      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6.0.0
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-
       - name: build vaadin-init
         run: go build -o vaadin-init .
 
@@ -151,6 +143,22 @@ jobs:
           test -z "$(git status --porcelain)" || {
             echo "the generated project should have a clean working tree"; exit 1;
           }
+
+      # After the project exists, not before: the Maven cache is keyed by hashing
+      # a pom, and until vaadin-init has run there is no pom in this checkout to
+      # hash — setup-java fails outright rather than skipping the cache. The
+      # generated pom is named explicitly for the same reason, and it also keys
+      # the two matrix legs apart, which is right: they resolve different
+      # dependencies.
+      #
+      # Matches the JDK the generated pom pins. run.sh looks for the configured
+      # JDK under ~/.sdkman and falls back to JAVA_HOME, which this sets.
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: generated/pom.xml
 
       # Through run.sh rather than mvn directly, so the task runner that ships in
       # every generated project is verified alongside the project.
