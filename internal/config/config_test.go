@@ -140,3 +140,43 @@ func TestFeaturesDriveTheDerivedAnswers(t *testing.T) {
 		t.Error("a project with integration tests needs the production-mode profile")
 	}
 }
+
+// The author of the first commit is git's business unless git has none, so a
+// Config without one is complete — but one that names an author has to name a
+// usable one.
+func TestAuthorIsOptionalButChecked(t *testing.T) {
+	c := Config{
+		GroupID: "com.example", ArtifactID: "my-app", ProjectName: "My App",
+		Package: "com.example.myapp", JavaVersion: "21",
+		VaadinVersion: "25.2.6", BootVersion: "4.1.1", OutputDir: "my-app",
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("a config with no author should validate: %v", err)
+	}
+
+	c.AuthorName, c.AuthorEmail = "Ann Example", "ann@example.invalid"
+	if err := c.Validate(); err != nil {
+		t.Errorf("a config with an author should validate: %v", err)
+	}
+
+	c.AuthorEmail = "ann"
+	if err := c.Validate(); err == nil {
+		t.Error("an email with no @ should be refused")
+	}
+}
+
+func TestValidAuthorEmail(t *testing.T) {
+	valid := []string{"ann@example.invalid", "a.b+c@sub.example.org", "me@localhost"}
+	invalid := []string{"", "   ", "ann", "@example.org", "ann@", "ann example@x.org", "<ann@example.org>"}
+
+	for _, s := range valid {
+		if err := ValidAuthorEmail(s); err != nil {
+			t.Errorf("ValidAuthorEmail(%q) = %v, want nil", s, err)
+		}
+	}
+	for _, s := range invalid {
+		if err := ValidAuthorEmail(s); err == nil {
+			t.Errorf("ValidAuthorEmail(%q) = nil, want an error", s)
+		}
+	}
+}

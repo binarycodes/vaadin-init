@@ -188,6 +188,7 @@ type Result struct {
 	Paths      []string
 	GitInit    bool
 	HooksPath  bool
+	AuthorSet  bool
 	Committed  bool
 	GitMessage string
 }
@@ -232,7 +233,7 @@ func (g *Generator) Write(c config.Config, options WriteOptions) (Result, error)
 	}
 
 	if options.Git {
-		g.initRepository(root, options.Commit, &result)
+		g.initRepository(root, c, options.Commit, &result)
 	}
 	return result, nil
 }
@@ -252,7 +253,7 @@ func (g *Generator) Write(c config.Config, options WriteOptions) (Result, error)
 // Failure here is reported, not fatal. The project is already written and
 // perfectly usable; git being absent, or having no identity configured, is a fact
 // about the machine rather than a problem with the generated project.
-func (g *Generator) initRepository(root string, commit bool, result *Result) {
+func (g *Generator) initRepository(root string, c config.Config, commit bool, result *Result) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		result.GitMessage = "git is not on the PATH: run `git init` yourself, then `git config core.hooksPath .githooks`"
@@ -290,6 +291,24 @@ func (g *Generator) initRepository(root string, commit bool, result *Result) {
 	}
 	result.HooksPath = true
 
+	// Into this repository's config and nowhere else. The answer was asked for
+	// because git had none, and the fix that reaches every other repository is
+	// git's own to offer — the summary points at it — not something to do on the
+	// side of generating a project.
+	if c.AuthorName != "" {
+		if err := run("config", "user.name", c.AuthorName); err != nil {
+			result.GitMessage = err.Error()
+			return
+		}
+	}
+	if c.AuthorEmail != "" {
+		if err := run("config", "user.email", c.AuthorEmail); err != nil {
+			result.GitMessage = err.Error()
+			return
+		}
+	}
+	result.AuthorSet = c.AuthorName != "" || c.AuthorEmail != ""
+
 	if !commit {
 		return
 	}
@@ -316,6 +335,66 @@ func (g *Generator) initRepository(root string, commit bool, result *Result) {
 		return
 	}
 	result.Committed = true
+}
+
+// Author is who git would make a commit as.
+type Author struct {
+	Name  string
+	Email string
+}
+
+// Known reports whether git has enough to commit with. Both halves, although a
+// name alone would do on some platforms: a commit by whatever the login account
+// happens to be called is the one the prompt exists to avoid.
+func (a Author) Known() bool {
+	return a.Name != "" && a.Email != ""
+}
+
+// CurrentAuthor asks git who it would commit as on this machine, so that the
+// question can be asked before the commit is attempted rather than reported
+// after it has failed.
+//
+// Asked from a directory that is no repository, because the one the user happens
+// to be standing in can carry an identity of its own that the new repository will
+// not inherit. useConfigOnly makes git refuse to guess: what it would have guessed
+// — the login name at the host — is exactly what the prompt is there to replace.
+// When git refuses, whichever half it does have is still fetched, so the prompt
+// can open on it rather than on nothing.
+//
+// The error is git being absent, and nothing else: a machine with no git gets no
+// question, since there will be no commit to ask on behalf of.
+func CurrentAuthor() (Author, error) {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		return Author{}, err
+	}
+	output := func(args ...string) string {
+		command := exec.Command(git, args...)
+		command.Dir = os.TempDir()
+		out, _ := command.Output()
+		return strings.TrimSpace(string(out))
+	}
+
+	if ident := output("-c", "user.useConfigOnly=true", "var", "GIT_COMMITTER_IDENT"); ident != "" {
+		if author, ok := parseIdent(ident); ok {
+			return author, nil
+		}
+	}
+	return Author{
+		Name:  output("config", "--get", "user.name"),
+		Email: output("config", "--get", "user.email"),
+	}, nil
+}
+
+// parseIdent reads `Name <email> <timestamp> <zone>`, the one form git var prints.
+func parseIdent(ident string) (Author, bool) {
+	open := strings.LastIndex(ident, " <")
+	end := strings.LastIndex(ident, ">")
+	if open < 0 || end < open {
+		return Author{}, false
+	}
+	author := Author{Name: strings.TrimSpace(ident[:open]), Email: ident[open+2 : end]}
+	return author, author.Known()
 }
 
 // initialCommitMessage is what the first commit says. It has to satisfy the hook

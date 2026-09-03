@@ -258,3 +258,72 @@ func TestTheCommandBarTakesNoAnswer(t *testing.T) {
 		}
 	}
 }
+
+// runAsking is run with the author question added, the way main adds it when
+// git has no identity to commit with.
+func runAsking(t *testing.T, c config.Config, answers string) (config.Config, error) {
+	t.Helper()
+	session, err := Run(c, offered(), Options{
+		Accessible: true,
+		AskAuthor:  true,
+		Input:      strings.NewReader(answers),
+		Output:     io.Discard,
+	})
+	return session.Config, err
+}
+
+// upToTheAuthor accepts every answer before the author question: the two
+// coordinates, the three identity answers, the three versions, and the stack —
+// which, being a multi-select, is confirmed with a 0 rather than a blank line.
+const upToTheAuthor = "\n\n" + "\n\n\n" + "\n\n\n" + "0\n"
+
+// Who the first commit is by is asked when git cannot say, and with nothing to
+// fall back on the question keeps being asked until it has an answer: the blank
+// line that accepts every other default is refused here.
+func TestTheAuthorIsAskedForWhenGitHasNone(t *testing.T) {
+	answers := upToTheAuthor + "\nAnn Example\nnot an email\nann@example.invalid\n" + strings.Repeat("\n", 10)
+
+	got, err := runAsking(t, seed(), answers)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got.AuthorName != "Ann Example" {
+		t.Errorf("author name = %q, want the one typed", got.AuthorName)
+	}
+	if got.AuthorEmail != "ann@example.invalid" {
+		t.Errorf("author email = %q, want the one typed after the refused one", got.AuthorEmail)
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("the answers do not validate: %v", err)
+	}
+}
+
+// The half git did have is offered back, and a blank line keeps it.
+func TestAnAuthorHalfKnownIsOfferedBack(t *testing.T) {
+	c := seed()
+	c.AuthorName = "Ann Example"
+	answers := upToTheAuthor + "\nann@example.invalid\n" + strings.Repeat("\n", 10)
+
+	got, err := runAsking(t, c, answers)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got.AuthorName != "Ann Example" {
+		t.Errorf("author name = %q, want the offered one kept", got.AuthorName)
+	}
+	if got.AuthorEmail != "ann@example.invalid" {
+		t.Errorf("author email = %q, want the one typed", got.AuthorEmail)
+	}
+}
+
+// And when git knows already, nobody is asked: the same blank lines produce a
+// Config that names no author, so nothing is written to the repository's config.
+func TestTheAuthorIsNotAskedForWhenGitKnows(t *testing.T) {
+	got, err := run(t, strings.Repeat("\n", 40))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got.AuthorName != "" || got.AuthorEmail != "" {
+		t.Errorf("author = %q <%q>, want none", got.AuthorName, got.AuthorEmail)
+	}
+}

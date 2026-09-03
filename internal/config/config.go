@@ -43,6 +43,13 @@ type Config struct {
 
 	// Where to write. Everything is created under here.
 	OutputDir string
+
+	// Who the first commit is by, when git does not already know. Empty means
+	// git has an identity of its own and nothing is written; set, they go into
+	// the new repository's own config and no further, because a tool that
+	// bootstraps one project has no business editing the settings of every other.
+	AuthorName  string
+	AuthorEmail string
 }
 
 // PackagePath is the base package as a directory path, for the src/main/java
@@ -151,6 +158,8 @@ func (c Config) Validate() error {
 		{"java version", ValidJavaVersion(c.JavaVersion)},
 		{"vaadin version", ValidVersion(c.VaadinVersion)},
 		{"spring boot version", ValidVersion(c.BootVersion)},
+		{"author name", validIfSet(c.AuthorName, ValidAuthorName)},
+		{"author email", validIfSet(c.AuthorEmail, ValidAuthorEmail)},
 	} {
 		if check.err != nil {
 			return fmt.Errorf("%s: %w", check.field, check.err)
@@ -171,6 +180,7 @@ var (
 	artifactIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 	identifierPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 	versionPattern    = regexp.MustCompile(`^\d+\.\d+(\.\d+)?(-[A-Za-z0-9.]+)?$`)
+	emailPattern      = regexp.MustCompile(`^[^\s@<>]+@[^\s@<>]+$`)
 )
 
 func ValidGroupID(s string) error {
@@ -237,6 +247,37 @@ func ValidVersion(s string) error {
 	}
 	if !versionPattern.MatchString(s) {
 		return fmt.Errorf("must look like 25.2.6 or 25.3.0-beta1; got %q", s)
+	}
+	return nil
+}
+
+// validIfSet applies a rule only to an answer that was given. The author fields
+// are optional in a Config — git usually knows already — so an empty one is not a
+// missing one here, while the prompt that asks for them accepts nothing less.
+func validIfSet(s string, validate func(string) error) error {
+	if s == "" {
+		return nil
+	}
+	return validate(s)
+}
+
+func ValidAuthorName(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	return nil
+}
+
+// ValidAuthorEmail asks for the shape a commit log expects, not a deliverable
+// address: git itself accepts anything, and an author of `<ann>` is the kind of
+// thing found in history years later with no way to tell who it was.
+func ValidAuthorEmail(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if !emailPattern.MatchString(s) {
+		return fmt.Errorf("must look like you@example.com")
 	}
 	return nil
 }

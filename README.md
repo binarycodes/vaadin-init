@@ -142,6 +142,12 @@ courtesy: with `--traceable` on, the generated build requires the commit SHA it
 was built from and refuses to run until a commit exists. `--no-commit` sets the
 repository up and leaves the commit to you; `--no-git` touches git not at all.
 
+On a machine where git has no name and email configured, the commit would fail,
+so the tool asks for them first — an Author section on the screen, or
+`--author-name` and `--author-email` from a script — and keeps them in the new
+repository's own config. Your global git configuration is never written; the
+section says how to set one everywhere yourself.
+
 ## Installing
 
 Download the binary for your platform from the releases, or build it:

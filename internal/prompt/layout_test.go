@@ -463,3 +463,41 @@ func TestGeneratingIsOneButton(t *testing.T) {
 		t.Errorf("the bar does not say the button submits: %q", bar)
 	}
 }
+
+// The author is a column like the others, and only there when it was asked for:
+// a machine whose git knows its user gets the five sections it always had.
+func TestTheAuthorIsAColumnOnlyWhenAsked(t *testing.T) {
+	c := seed()
+	s := newScreen(&c, offered(), Options{Banner: banner, AskAuthor: true})
+	s.Init()
+	s.Update(versionsMsg(fetched()))
+	s.Update(tea.WindowSizeMsg{Width: wide, Height: tall})
+
+	if got := len(s.tiled.shown()); got != 6 {
+		t.Fatalf("%d sections with the author asked for, want 6", got)
+	}
+	if !s.columns {
+		t.Fatalf("the six sections should still be tiled in a %dx%d terminal", wide, tall)
+	}
+	on := view(s)
+	for _, text := range []string{authorTitle, "Name", "Email"} {
+		if !strings.Contains(on, text) {
+			t.Errorf("%q is not on the screen", text)
+		}
+	}
+	columns, rows := s.tiled.columns()
+	if len(columns) != 5 || len(rows) != 1 {
+		t.Errorf("%d columns and %d rows, want the author beside the others and the output still alone underneath", len(columns), len(rows))
+	}
+	if hints := ansi.ReplaceAllString(s.bar(), ""); !strings.Contains(hints, "alt+6") {
+		t.Errorf("the author section has no key of its own: %q", hints)
+	}
+
+	without := screenAt(t, wide, tall)
+	if got := len(without.tiled.shown()); got != 5 {
+		t.Errorf("%d sections when the author is not asked for, want 5", got)
+	}
+	if strings.Contains(view(without), authorTitle) {
+		t.Error("the author section is on the screen without being asked for")
+	}
+}

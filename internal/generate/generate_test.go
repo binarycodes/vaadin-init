@@ -466,3 +466,144 @@ func TestGitCanBeDeclinedEntirely(t *testing.T) {
 		t.Error("no .git directory should have been created")
 	}
 }
+
+// gitWithoutIdentity is the machine the author prompt exists for: git on the
+// PATH and no idea who is using it. Every place git would look is pointed at
+// nothing — the environment, the global file, the system file — because a
+// developer's own machine has all three filled in and would make these tests
+// pass for the wrong reason.
+func gitWithoutIdentity(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on the PATH")
+	}
+	for _, name := range []string{
+		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL",
+	} {
+		if value, set := os.LookupEnv(name); set {
+			t.Cleanup(func() { os.Setenv(name, value) })
+			os.Unsetenv(name)
+		}
+	}
+	home := t.TempDir()
+	global := filepath.Join(home, "gitconfig")
+	if err := os.WriteFile(global, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
+
+// The failure that started this: a fresh machine, a generated project, and a
+// first commit that never happened because git did not know who was making it.
+// The project is still written, and the summary says what to do.
+func TestWithoutAnAuthorTheCommitIsReportedNotMade(t *testing.T) {
+	gitWithoutIdentity(t)
+
+	c := baseConfig()
+	c.OutputDir = t.TempDir()
+	result, err := templates(t).Write(c, WriteOptions{Force: true, Git: true, Commit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Committed {
+		t.Fatal("a commit was made with no identity to make it as")
+	}
+	if !strings.Contains(result.GitMessage, "nothing was committed") ||
+		!strings.Contains(result.GitMessage, initialCommitMessage) {
+		t.Errorf("the summary does not say how to commit: %q", result.GitMessage)
+	}
+}
+
+// An author given to the generator goes into the new repository's own config and
+// is who the first commit is by — and nowhere else, since a tool that bootstraps
+// one project has no business changing every other repository's settings.
+func TestTheAuthorIsKeptInTheRepository(t *testing.T) {
+	gitWithoutIdentity(t)
+
+	c := baseConfig()
+	c.OutputDir = t.TempDir()
+	c.AuthorName, c.AuthorEmail = "Ann Example", "ann@example.invalid"
+	result, err := templates(t).Write(c, WriteOptions{Force: true, Git: true, Commit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.AuthorSet {
+		t.Error("the result does not say the author was kept")
+	}
+	if !result.Committed {
+		t.Fatalf("no commit was made: %s", result.GitMessage)
+	}
+
+	author, err := gitOutput(t, result.Root, "log", "--format=%an <%ae>")
+	if err != nil || author != "Ann Example <ann@example.invalid>" {
+		t.Errorf("the commit is by %q (%v), want the author given", author, err)
+	}
+	email, err := gitOutput(t, result.Root, "config", "--local", "user.email")
+	if err != nil || email != "ann@example.invalid" {
+		t.Errorf("the repository's own user.email = %q (%v)", email, err)
+	}
+
+	// And the global configuration is exactly as empty as it was.
+	if global, err := gitOutput(t, result.Root, "config", "--global", "--list"); global != "" {
+		t.Errorf("the global configuration was written to: %q (%v)", global, err)
+	}
+}
+
+// Asking before the commit rather than after it fails depends on knowing what git
+// would do, and git is the one to ask: whatever it has — a global file, the
+// environment, half of each — is what the answer opens on.
+func TestCurrentAuthorIsWhatGitWouldCommitAs(t *testing.T) {
+	gitWithoutIdentity(t)
+
+	author, err := CurrentAuthor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if author.Known() || author != (Author{}) {
+		t.Errorf("with nothing configured, author = %+v, want nothing", author)
+	}
+
+	global := os.Getenv("GIT_CONFIG_GLOBAL")
+	if err := os.WriteFile(global, []byte("[user]\n\tname = Ann Example\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	author, _ = CurrentAuthor()
+	if author.Known() || author.Name != "Ann Example" || author.Email != "" {
+		t.Errorf("with only a name configured, author = %+v, want the name and no email", author)
+	}
+
+	t.Setenv("GIT_COMMITTER_EMAIL", "ann@example.invalid")
+	author, _ = CurrentAuthor()
+	if !author.Known() || author != (Author{Name: "Ann Example", Email: "ann@example.invalid"}) {
+		t.Errorf("with a name and an email, author = %+v, want both", author)
+	}
+}
+
+// The identity of the repository the user happens to be standing in is not one
+// the new repository will have, so it must not be what stops the question.
+func TestCurrentAuthorIgnoresTheRepositoryStoodIn(t *testing.T) {
+	gitWithoutIdentity(t)
+
+	elsewhere := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "--quiet"},
+		{"config", "user.name", "Somebody Else"},
+		{"config", "user.email", "else@example.invalid"},
+	} {
+		if output, err := gitOutput(t, elsewhere, args...); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	t.Chdir(elsewhere)
+
+	author, err := CurrentAuthor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if author.Known() {
+		t.Errorf("author = %+v, taken from a repository the new one will not inherit from", author)
+	}
+}

@@ -77,6 +77,11 @@ type Options struct {
 	// lets the prompt flow be driven from a script or a test.
 	Accessible bool
 
+	// AskAuthor adds the question of who the first commit is by. Asked only when
+	// git could not say — the caller has checked — because a machine that knows
+	// its user should not have them typed in once per project.
+	AskAuthor bool
+
 	// Banner is what the full-screen form prints above the questions. Passed in
 	// rather than built here because it names the tool's own version, which this
 	// package has no business knowing — and it is drawn inside the form's screen
@@ -586,6 +591,43 @@ func stackSelect(c *config.Config, features *[]string, title string) *huh.MultiS
 		Height(rows)
 }
 
+// The two halves of who the first commit is by. Nothing is offered unless git had
+// one half already, so in accessible mode — where an empty answer normally means
+// "keep what you offered me" — an empty field is only allowed through when there
+// is something in it to keep.
+func authorNameInput(c *config.Config, options Options) *huh.Input {
+	return huh.NewInput().
+		Prompt(ui.Caret).
+		Title("Name").
+		Value(&c.AuthorName).
+		Validate(options.required(c.AuthorName, config.ValidAuthorName))
+}
+
+func authorEmailInput(c *config.Config, options Options) *huh.Input {
+	return huh.NewInput().
+		Prompt(ui.Caret).
+		Title("Email").
+		Value(&c.AuthorEmail).
+		Validate(options.required(c.AuthorEmail, config.ValidAuthorEmail))
+}
+
+// required is the validator for a field that may have nothing to fall back on: with
+// an offered value the accessible allowance for an empty answer stands, without
+// one an empty answer is refused, since huh would otherwise substitute the empty
+// default and the whole Config fail validation after the last question.
+func (o Options) required(offered string, validate func(string) error) func(string) error {
+	if offered == "" {
+		return validate
+	}
+	return o.validator(validate)
+}
+
+// The section that asks who the first commit is by, in the words both forms use.
+const (
+	authorTitle       = "Author"
+	authorDescription = "Git has no identity for the first commit. Kept in this repository only; git config --global sets one everywhere."
+)
+
 // directoryInput asks where to write the project.
 //
 // Inline — the question and the answer on one line — because on the screen this
@@ -681,6 +723,14 @@ func newSections(
 		newSection("Stack", "The core is always generated. These are the rest.", nil,
 			stackSelect(c, features, "")),
 
+		// A column like the others, and only there when git could not answer for
+		// itself. Before Output rather than after, so the button that starts the
+		// whole thing stays the last thing on the screen.
+		newSection(authorTitle, authorDescription,
+			func() bool { return !options.AskAuthor },
+			authorNameInput(c, options),
+			authorEmailInput(c, options)),
+
 		// Under everything rather than beside it: where the project goes is the
 		// last thing decided about it, and the button that starts the whole
 		// thing follows every answer above it rather than sitting at the foot of
@@ -732,7 +782,7 @@ func restForm(
 	theme *huh.Theme,
 	options Options,
 ) *huh.Form {
-	form := huh.NewForm(
+	groups := []*huh.Group{
 		huh.NewGroup(
 			projectNameInput(c, options),
 			descriptionInput(c),
@@ -746,13 +796,25 @@ func restForm(
 			stackSelect(c, features, "Stack"),
 		).Title("Stack").
 			Description("The core is always generated. These are the rest."),
+	}
 
-		huh.NewGroup(
-			directoryInput(c, options, false),
-			huh.NewConfirm().
-				Title("Generate?").
-				Value(confirmed),
-		).Title("Output"),
-	)
+	// Left out rather than hidden: huh asks a hidden group's questions anyway in
+	// accessible mode, which would ask everyone who they are.
+	if options.AskAuthor {
+		groups = append(groups, huh.NewGroup(
+			authorNameInput(c, options),
+			authorEmailInput(c, options),
+		).Title(authorTitle).
+			Description(authorDescription))
+	}
+
+	groups = append(groups, huh.NewGroup(
+		directoryInput(c, options, false),
+		huh.NewConfirm().
+			Title("Generate?").
+			Value(confirmed),
+	).Title("Output"))
+
+	form := huh.NewForm(groups...)
 	return options.apply(form.WithTheme(theme).WithShowHelp(true))
 }

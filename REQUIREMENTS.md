@@ -55,6 +55,8 @@ has been read.
 | `--boot-version` | newest found | Spring Boot version |
 | `--java-version` | defaults file | JDK major version the build pins |
 | `--dir` | the artifact id | where to write the project |
+| `--author-name` | what git has configured | name for the first commit, kept in the new repository |
+| `--author-email` | what git has configured | email for the first commit, kept in the new repository |
 | `--database` | defaults file | PostgreSQL, Flyway, JPA, Testcontainers, dev compose |
 | `--auth` | defaults file | OIDC login against Keycloak in the dev stack |
 | `--e2e` | defaults file | Playwright browser tests behind an `it` profile |
@@ -81,7 +83,13 @@ from comparing values.
 2.6 `--vaadin-version` and `--boot-version` are used only when typed; otherwise
 the newest release found by the lookup wins, in the TUI and in `--yes` alike.
 
-2.7 Exit codes: `0` success; `130` after a cancelled conversation, with
+2.7 `--author-name` and `--author-email` are for a machine whose git has no
+identity to commit with. Given, they are written to the new repository's own
+config before the first commit; not given, `generate.CurrentAuthor()` asks git who
+it would commit as, and the TUI asks for whichever half is missing (§6.2.6). Git's
+global configuration is never written.
+
+2.8 Exit codes: `0` success; `130` after a cancelled conversation, with
 `Cancelled. Nothing was written.` on stderr; `1` on any other error, with
 `✗ <error>` on stderr.
 
@@ -120,7 +128,8 @@ what the TUI would have offered.
 4.1 `config.Config` is the only value templates are rendered against:
 `GroupID`, `ArtifactID`, `ProjectName`, `Description`, `Package`, `JavaVersion`,
 `VaadinVersion`, `BootVersion`, `Database`, `Auth`, `E2E`, `Coverage`,
-`Traceable`, `OutputDir`.
+`Traceable`, `OutputDir`, `AuthorName`, `AuthorEmail`. The last two are empty
+unless git had no identity of its own; empty, nothing is written to the repository.
 
 4.2 Derivations:
 
@@ -143,6 +152,8 @@ before generating:
 | java version | an integer, ≥ 17 |
 | vaadin / boot version | `^\d+\.\d+(\.\d+)?(-[A-Za-z0-9.]+)?$`, non-empty |
 | output directory | non-empty |
+| author name | when set, non-empty after trimming |
+| author email | when set, `^[^\s@<>]+@[^\s@<>]+$` |
 
 4.4 Values derived for the templates:
 
@@ -214,6 +225,7 @@ mode.
 | 2 | Identity | What this project is called to people. | Project name, Description, Base package |
 | 3 | Versions | Newest first, from Maven Central. | Vaadin version, Spring Boot version, Java version |
 | 4 | Stack | The core is always generated. These are the rest. | one multi-select of five options |
+| — | Author | Git has no identity for the first commit. Kept in this repository only; git config --global sets one everywhere. | Name, Email — only when `Options.AskAuthor` (§6.2.6) |
 | 5 | Output | Created if it does not exist. Must be empty. | Directory (inline), Generate |
 
 6.2.2 Two further sections are hidden unless a version select was left on the
@@ -241,6 +253,19 @@ answer on one line) and its description is carried by the section.
 6.2.5 Generating is one button — `Affirmative("Generate")`, `Negative("")` — and
 the confirm's toggle, accept and reject keys are disabled so the bar offers no key
 that does nothing.
+
+6.2.6 The Author section is a column like the others, before Output, and is
+there only when `Options.AskAuthor` is set. `main` sets it when there is a
+conversation to ask in (`--yes` is left with the flags and the summary), a commit
+is coming (`--no-git` and `--no-commit` both mean it is not) and
+`generate.CurrentAuthor()` reports that git would refuse one: it runs
+`git -c user.useConfigOnly=true var GIT_COMMITTER_IDENT` from a directory that is
+no repository, so an identity local to the repository the user is standing in does
+not count, and takes the name and email from the ident it prints. When git
+refuses, `git config --get user.name` and `user.email` supply whichever half is
+known, and the fields open on it. Both fields are required: a field with nothing
+offered rejects the empty answer in accessible mode too, where an empty answer
+normally means "keep what you offered". A machine with no git is not asked.
 
 ### 6.3 Layout
 
@@ -366,7 +391,9 @@ huh's accessible prompts: no alternate screen, no banner, no boxes.
 
 6.9.2 The conversation is two forms. The first asks the coordinates; the project
 name, package and directory are re-derived from the answers; the second asks the
-rest. This is what the screen's live derivation replaces.
+rest. This is what the screen's live derivation replaces. The Author group is
+appended to the second form only when it is asked for — left out rather than
+hidden, because of 6.9.3.
 
 6.9.3 The version questions are plain inputs pre-filled with the newest release,
 not selects with a follow-up: huh asks a hidden group's questions anyway in
@@ -438,7 +465,10 @@ onto a tree where `run.sh` lost its executable bit sets it again.
 
 1. `git init --quiet`, unless `.git` already exists;
 2. `git config core.hooksPath .githooks`, so the hook the project ships is live;
-3. unless `--no-commit`, `git add -A` and `git commit --message "chore: initial commit"`.
+3. `git config user.name` and `git config user.email` for whichever of
+   `AuthorName` and `AuthorEmail` is set — the repository's own config, never
+   `--global`;
+4. unless `--no-commit`, `git add -A` and `git commit --message "chore: initial commit"`.
 
 7.9 The commit is only ever the first one. A repository that already has a `HEAD`
 is left alone and says so: *this repository already has commits, so none was
@@ -481,8 +511,9 @@ single-child directories collapsed onto one line), `SectionBox`, `Fields`,
 
 8.6 The summary rows are `where` (path relative to the working directory when it
 is under it, absolute otherwise, and the file count), `stack` (the three
-versions), `options` (`Selected()`, or `none — core only`), `git` (what was done,
-or `not initialised`).
+versions), `options` (`Selected()`, or `none — core only`), `git` (what was done —
+`initialised`, `commit-msg hook wired up`, `author kept in this repository`, `first
+commit made` — or `not initialised`).
 
 8.7 The next steps are `cd <dir>`, then `./run.sh env` when a container runtime is
 required, `./run.sh run`, then `./run.sh verify` when the project has integration
@@ -656,7 +687,11 @@ dependency only when it is used, `run.sh` and the hook are executable, and the
 shared files are byte-identical to their templates. It also covers the git
 behaviour: the project commits itself, that commit satisfies the hook the project
 ships, existing history is untouched, and both `--no-commit` and `--no-git` are
-honoured.
+honoured. With every place git looks for an identity pointed at nothing, it checks
+that the commit is reported rather than made, that an author given goes into the
+repository's config and no further and is who the commit is by, and that
+`CurrentAuthor()` reports what git has — nothing, one half, both — and not the
+identity of the repository the test is standing in.
 
 13.2 `internal/prompt` drives the conversation two ways: through huh's accessible
 mode, and by stepping the full-screen model at a range of terminal sizes. The
@@ -666,7 +701,9 @@ back to one section at a time; that the bar is on the bottom row whatever is abo
 it; that only one question is ever active after a jump; that a derived answer
 follows the coordinates but a typed one is never taken back; that the version
 lists open on the newest release; that the escape hatch appears when a version is
-typed; that the output section is the only one with a row of its own and is drawn
+typed; that the author section is a column only when it is asked for, and that
+its questions are asked in accessible mode, refuse an empty answer with nothing
+offered, and keep an offered half; that the output section is the only one with a row of its own and is drawn
 to the whole width; that generating is one button and the bar advertises no key
 that does nothing; that the project is written without leaving the screen; that a
 task runs into the log and comes back, a failure included; that ctrl+c stops the

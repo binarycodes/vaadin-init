@@ -98,6 +98,8 @@ func run() error {
 	bootVersion := flags.String("boot-version", "", "Spring Boot version (default: the newest release found on Maven Central)")
 	javaVersion := flags.String("java-version", cfg.JavaVersion, "JDK major version the build pins")
 	outputDir := flags.String("dir", "", "where to write the project (default: the artifact id)")
+	authorName := flags.String("author-name", "", "name for the first commit, kept in the new repository (default: what git has configured)")
+	authorEmail := flags.String("author-email", "", "email for the first commit, kept in the new repository (default: what git has configured)")
 
 	database := flags.Bool("database", cfg.Database, "PostgreSQL, Flyway, JPA, Testcontainers and a dev compose file")
 	auth := flags.Bool("auth", cfg.Auth, "OIDC login against Keycloak in the dev stack")
@@ -131,6 +133,7 @@ func run() error {
 	cfg.JavaVersion = *javaVersion
 	cfg.Database, cfg.Auth = *database, *auth
 	cfg.E2E, cfg.Coverage, cfg.Traceable = *e2e, *coverage, *traceable
+	cfg.AuthorName, cfg.AuthorEmail = *authorName, *authorEmail
 
 	// The derived answers follow the coordinates unless the user named one
 	// explicitly. Without this, --artifact-id on its own would generate a project
@@ -176,10 +179,30 @@ func run() error {
 	interactive := !*yes && (*accessible ||
 		(isatty.IsTerminal(os.Stdout.Fd()) && isatty.IsTerminal(os.Stdin.Fd())))
 
+	// Whether to ask who the commit is by is settled before the questions open,
+	// because the screen shows every section at once and cannot grow one later.
+	// Asked only when a commit is coming — with --no-commit there is nothing for
+	// an identity to sign — and only when git would otherwise refuse; a machine
+	// that knows who its user is should not have to say so once per project. A
+	// scripted run has nobody to ask, and is left with the flags and the summary.
+	askAuthor := false
+	if interactive && writeOptions.Commit && (cfg.AuthorName == "" || cfg.AuthorEmail == "") {
+		if author, err := generate.CurrentAuthor(); err == nil && !author.Known() {
+			askAuthor = true
+			// Whichever half git had is offered back rather than asked again.
+			if cfg.AuthorName == "" {
+				cfg.AuthorName = author.Name
+			}
+			if cfg.AuthorEmail == "" {
+				cfg.AuthorEmail = author.Email
+			}
+		}
+	}
+
 	var session prompt.Session
 	var result generate.Result
 	if interactive {
-		options := prompt.Options{Accessible: *accessible}
+		options := prompt.Options{Accessible: *accessible, AskAuthor: askAuthor}
 		// Handed to the form rather than printed here, because the form takes
 		// over the whole terminal and anything printed before it is wiped when it
 		// does. Not in accessible mode: a rule drawn down the left of two lines is
@@ -415,6 +438,9 @@ func outcome(cfg config.Config, result generate.Result) prompt.Outcome {
 		parts := []string{"initialised"}
 		if result.HooksPath {
 			parts = append(parts, "commit-msg hook wired up")
+		}
+		if result.AuthorSet {
+			parts = append(parts, "author kept in this repository")
 		}
 		if result.Committed {
 			parts = append(parts, "first commit made")
