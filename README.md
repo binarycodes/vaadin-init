@@ -133,6 +133,12 @@ vaadin-init --yes \
     --database --e2e --coverage --traceable
 ```
 
+Each project takes its own ports for the application, PostgreSQL and Keycloak,
+drawn at random from a range in the defaults file (49000–51000 to begin with) and
+skipping anything this machine is listening on, so two generated projects run side
+by side. The summary lists them; `--app-port`, `--db-port` and `--auth-port` pin
+them.
+
 `--dry-run` lists what would be written and writes nothing. `--help` lists every
 flag, with this machine's defaults filled in.
 

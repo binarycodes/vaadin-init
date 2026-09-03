@@ -12,7 +12,7 @@ failures that causes look like source errors rather than JDK errors.
 
 ```sh
 {{if .ContainerRequired}}./run.sh env      # bring up the development stack
-{{end}}./run.sh run      # start the application on http://localhost:8080
+{{end}}./run.sh run      # start the application on http://localhost:{{.AppPort}}
 ./run.sh test     # unit tests
 {{if .E2E}}./run.sh verify   # unit tests + integration tests, in production mode
 {{end}}./run.sh help     # every task

@@ -32,6 +32,9 @@ func baseConfig() config.Config {
 		VaadinVersion: "25.2.6",
 		BootVersion:   "4.1.1",
 		OutputDir:     "note-harbor",
+		AppPort:       49100,
+		DatabasePort:  49200,
+		AuthPort:      49300,
 	}
 }
 
@@ -689,4 +692,51 @@ func spellings(t *testing.T, path string) []string {
 		return []string{path}
 	}
 	return []string{path, resolved}
+}
+
+// The three ports go wherever the project names a host port, and the fixed ones
+// go nowhere: a single 8080 left in the realm's redirect URIs is a login that
+// bounces to a port nothing is listening on.
+func TestThePortsAreTheProjectsOwnEverywhere(t *testing.T) {
+	c := baseConfig()
+	c.Database, c.Auth = true, true
+	files := templates(t).renderMap(t, c)
+
+	wants := map[string][]string{
+		"src/main/resources/application.properties": {
+			"server.port=49100",
+			"jdbc:postgresql://localhost:49200/",
+			"issuer-uri=http://localhost:49300/realms/note-harbor",
+		},
+		"environment/dev/compose.yaml": {`"49200:5432"`, `"49300:8080"`},
+		"environment/dev/keycloak/realm.json": {
+			`"http://localhost:49100/*"`,
+			`"http://localhost:49100"`,
+		},
+		"README.md": {"http://localhost:49100"},
+		"src/test/java/com/example/tools/noteharbor/TestSecurityConfiguration.java": {
+			`"http://localhost:49300/realms/note-harbor"`,
+		},
+	}
+	for path, fragments := range wants {
+		body, ok := files[path]
+		if !ok {
+			t.Fatalf("%s was not generated", path)
+		}
+		for _, fragment := range fragments {
+			if !strings.Contains(body, fragment) {
+				t.Errorf("%s does not contain %q", path, fragment)
+			}
+		}
+	}
+
+	// Container-side ports are the images' own and stay; host-side, nothing but
+	// the three chosen ones may appear.
+	for path, body := range files {
+		for _, stale := range []string{"localhost:8080", "localhost:8081", "localhost:5432", `"8081:`, `"5432:`, `"9000:`} {
+			if strings.Contains(body, stale) {
+				t.Errorf("%s still names a fixed port: %q", path, stale)
+			}
+		}
+	}
 }

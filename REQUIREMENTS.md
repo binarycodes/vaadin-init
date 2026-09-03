@@ -55,6 +55,9 @@ has been read.
 | `--boot-version` | newest found | Spring Boot version |
 | `--java-version` | defaults file | JDK major version the build pins |
 | `--dir` | the artifact id | where to write the project |
+| `--app-port` | drawn from the range | port the application listens on |
+| `--db-port` | drawn from the range | host port the dev stack's PostgreSQL is published on |
+| `--auth-port` | drawn from the range | host port the dev stack's Keycloak is published on |
 | `--author-name` | what git has configured | name for the first commit, kept in the new repository |
 | `--author-email` | what git has configured | email for the first commit, kept in the new repository |
 | `--database` | defaults file | PostgreSQL, Flyway, JPA, Testcontainers, dev compose |
@@ -90,7 +93,11 @@ who it would commit as in the output directory, and the TUI asks for whichever
 half is missing (§6.2.6). Git's
 global configuration is never written.
 
-2.8 Exit codes: `0` success; `130` after a cancelled conversation, with
+2.8 `--app-port`, `--db-port` and `--auth-port` default to three ports drawn from
+the defaults file's range (§3.4) when the defaults are loaded, so `--help` shows
+this run's draw; a flag replaces one draw.
+
+2.9 Exit codes: `0` success; `130` after a cancelled conversation, with
 `Cancelled. Nothing was written.` on stderr; `1` on any other error, with
 `✗ <error>` on stderr.
 
@@ -113,6 +120,10 @@ java_version = "21"
 vaadin_version = "25.2.6"
 boot_version = "4.1.1"
 
+[ports]
+from = 49000
+to = 51000
+
 [features]
 database = true
 auth = true
@@ -124,13 +135,24 @@ traceable = false
 3.4 `Defaults.ToConfig()` fills in the derived fields, so `--yes` produces exactly
 what the TUI would have offered.
 
+3.5 `[ports]` is the range each project's three ports are drawn from.
+`ToConfig()` calls `PickPorts(from, to, 3)`: a random permutation of the range,
+taking ports nothing on this machine is listening on (`net.Listen` on
+`127.0.0.1`) and falling back to busy ones only when fewer than three are free.
+Random rather than lowest-free so that projects generated while the stack is down
+do not all land on the same port. A range that is not within 1024–65535, or has
+room for fewer than three ports, is refused when the file is loaded, naming the
+file.
+
 ## 4. The answers
 
 4.1 `config.Config` is the only value templates are rendered against:
 `GroupID`, `ArtifactID`, `ProjectName`, `Description`, `Package`, `JavaVersion`,
 `VaadinVersion`, `BootVersion`, `Database`, `Auth`, `E2E`, `Coverage`,
-`Traceable`, `OutputDir`, `AuthorName`, `AuthorEmail`. The last two are empty
-unless git had no identity of its own; empty, nothing is written to the repository.
+`Traceable`, `OutputDir`, `AppPort`, `DatabasePort`, `AuthPort`, `AuthorName`,
+`AuthorEmail`. The three ports are always set, whether or not the stack piece is
+generated. The author fields are empty unless git had no identity of its own;
+empty, nothing is written to the repository.
 
 4.2 Derivations:
 
@@ -153,6 +175,7 @@ before generating:
 | java version | an integer, ≥ 17 |
 | vaadin / boot version | `^\d+\.\d+(\.\d+)?(-[A-Za-z0-9.]+)?$`, non-empty |
 | output directory | non-empty |
+| app / database / auth port | each 1024–65535, and the three distinct |
 | author name | when set, non-empty after trimming |
 | author email | when set, `^[^\s@<>]+@[^\s@<>]+$` |
 
@@ -516,12 +539,15 @@ single-child directories collapsed onto one line), `SectionBox`, `Fields`,
 
 8.6 The summary rows are `where` (path relative to the working directory when it
 is under it, absolute otherwise, and the file count), `stack` (the three
-versions), `options` (`Selected()`, or `none — core only`), `git` (what was done —
+versions), `options` (`Selected()`, or `none — core only`), `ports` (`app <n>`,
+then `postgres <n>` with the database and `keycloak <n>` with auth), `git` (what
+was done —
 `initialised`, `commit-msg hook wired up`, `author kept in this repository`, `first
 commit made` — or `not initialised`).
 
 8.7 The next steps are `cd <dir>`, then `./run.sh env` when a container runtime is
-required, `./run.sh run`, then `./run.sh verify` when the project has integration
+required, `./run.sh run` (*start the application on http://localhost:<app port>*),
+then `./run.sh verify` when the project has integration
 tests or `./run.sh test` when it does not, then `./run.sh help`.
 
 8.8 The full-screen path prints none of this on exit; it showed it on the screen.
@@ -640,20 +666,25 @@ commented, as the defaults `run.sh` applies.
 function there becomes `./run.sh <name>`, and `project_usage` is printed under the
 built-in list. It ships as a worked example, commented out.
 
-12.8 `application.properties` sets the application name, opens a browser in dev
-mode, shows `vaadin.allowed-packages` commented out, and sets
-`logging.level.<package>=DEBUG`. With the database it points at the dev
-PostgreSQL, sets `ddl-auto=validate` and `open-in-view=false`. With auth it
-configures the Keycloak registration (`client-id` = artifact id, secret
-`dev-secret`, scopes `openid,profile,email`) and an issuer the browser can reach.
+12.8 `application.properties` sets the application name, `server.port` to the
+app port, opens a browser in dev mode, shows `vaadin.allowed-packages` commented
+out, and sets `logging.level.<package>=DEBUG`. With the database it points at the
+dev PostgreSQL on the database port, sets `ddl-auto=validate` and
+`open-in-view=false`. With auth it configures the Keycloak registration
+(`client-id` = artifact id, secret `dev-secret`, scopes `openid,profile,email`) and
+an issuer the browser can reach, on the auth port.
 
 12.9 `environment/dev/compose.yaml` is named after the container prefix and
 declares a healthcheck per service: `postgres:18-alpine` with the derived database
-name, user and password `dev` on 5432 with a named volume, and
-`quay.io/keycloak/keycloak:26.0` in `start-dev --import-realm` on 8081 (and 9000
-for health), importing `environment/dev/keycloak/realm.json` — a realm named after
-the artifact id, holding a confidential client of the same name with the secret
-`dev-secret`, a `user` realm role, and one user `dev` / `dev`.
+name, user and password `dev`, published on the database port with a named
+volume, and `quay.io/keycloak/keycloak:26.0` in `start-dev --import-realm`
+published on the auth port (its management port 9000 is reached by the healthcheck
+inside the container and not published), importing
+`environment/dev/keycloak/realm.json` — a realm named after the artifact id,
+holding a confidential client of the same name with the secret `dev-secret`,
+redirect URIs and web origin on the app port, a `user` realm role, and one user
+`dev` / `dev`. `TestSecurityConfiguration` names the same issuer as the
+properties, on the auth port.
 
 12.10 Java sources: `Application` (a `@SpringBootApplication` and
 `AppShellConfigurator` with the Lumo stylesheet and `styles.css`), `MainView` (`@Route("")`, titled with the project
@@ -689,7 +720,9 @@ checks each: the pom is well-formed XML, the realm is valid JSON, no file carrie
 an unresolved template value, every Java file declares the package its path
 implies, each optional file appears exactly when its option is on, the pom names a
 dependency only when it is used, `run.sh` and the hook are executable, and the
-shared files are byte-identical to their templates. It also covers the git
+shared files are byte-identical to their templates, and the three ports appear
+wherever the project names a host port with no fixed 8080, 8081 or 5432 left
+beside them. It also covers the git
 behaviour: the project commits itself, that commit satisfies the hook the project
 ships, existing history is untouched, and both `--no-commit` and `--no-git` are
 honoured. With every place git looks for an identity pointed at nothing, it checks

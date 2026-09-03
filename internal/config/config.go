@@ -9,6 +9,8 @@ package config
 
 import (
 	"fmt"
+	"math/rand/v2"
+	"net"
 	"regexp"
 	"strconv"
 	"strings"
@@ -43,6 +45,16 @@ type Config struct {
 
 	// Where to write. Everything is created under here.
 	OutputDir string
+
+	// The host ports the project takes: the application itself, and what the
+	// dev stack's PostgreSQL and Keycloak are published on. One each per project
+	// rather than 8080, 5432 and 8081 for all of them, so that two generated
+	// projects can run at the same time. Always set, whether or not the stack
+	// piece is generated, so a project that gains the database later has a port
+	// waiting rather than a collision.
+	AppPort      int
+	DatabasePort int
+	AuthPort     int
 
 	// Who the first commit is by, when git does not already know. Empty means
 	// git has an identity of its own and nothing is written; set, they go into
@@ -168,7 +180,78 @@ func (c Config) Validate() error {
 	if c.OutputDir == "" {
 		return fmt.Errorf("output directory: must not be empty")
 	}
+	for _, port := range []struct {
+		field string
+		value int
+	}{
+		{"app port", c.AppPort},
+		{"database port", c.DatabasePort},
+		{"auth port", c.AuthPort},
+	} {
+		if err := ValidPort(port.value); err != nil {
+			return fmt.Errorf("%s: %w", port.field, err)
+		}
+	}
+	if c.AppPort == c.DatabasePort || c.AppPort == c.AuthPort || c.DatabasePort == c.AuthPort {
+		return fmt.Errorf("ports: the app, database and auth ports must differ; got %d, %d and %d",
+			c.AppPort, c.DatabasePort, c.AuthPort)
+	}
 	return nil
+}
+
+// portsNeeded is how many distinct ports a project takes: the application,
+// PostgreSQL and Keycloak.
+const portsNeeded = 3
+
+// ValidPort admits the unprivileged range. Below 1024 the application would need
+// root to bind, which is not a way anyone should be running a dev server.
+func ValidPort(n int) error {
+	if n < 1024 || n > 65535 {
+		return fmt.Errorf("must be a port between 1024 and 65535; got %d", n)
+	}
+	return nil
+}
+
+// PickPorts draws n distinct ports from [from, to] at random, preferring ones
+// nothing on this machine is listening on right now.
+//
+// Random rather than the first free: the first free port from the bottom of the
+// range is the same port for every project generated on a machine whose stack is
+// down at the time, which is exactly the collision the range is there to avoid.
+// A port in use now is only skipped, not refused — the project is not running
+// yet, and a range with fewer than n free ports still has to produce a Config.
+func PickPorts(from, to, n int) []int {
+	candidates := rand.Perm(to - from + 1)
+	for i := range candidates {
+		candidates[i] += from
+	}
+
+	var picked, busy []int
+	for _, port := range candidates {
+		if len(picked) == n {
+			break
+		}
+		if portFree(port) {
+			picked = append(picked, port)
+		} else {
+			busy = append(busy, port)
+		}
+	}
+	for len(picked) < n && len(busy) > 0 {
+		picked, busy = append(picked, busy[0]), busy[1:]
+	}
+	return picked
+}
+
+// portFree reports whether a port can be bound on this machine right now. A
+// variable so that a test can decide what is busy without opening sockets.
+var portFree = func(port int) bool {
+	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	listener.Close()
+	return true
 }
 
 // The shapes Maven and Java actually accept, narrowed to the ones a new project

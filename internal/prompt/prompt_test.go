@@ -22,6 +22,9 @@ func seed() config.Config {
 		E2E:           true,
 		Coverage:      true,
 		Traceable:     true,
+		AppPort:       49100,
+		DatabasePort:  49200,
+		AuthPort:      49300,
 	}
 	c.ProjectName = config.DeriveProjectName(c.ArtifactID)
 	c.Package = config.DerivePackage(c.GroupID, c.ArtifactID)

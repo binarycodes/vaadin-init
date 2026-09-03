@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestValidGroupID(t *testing.T) {
 	valid := []string{"com.example", "io.binarycodes", "com.example.tools", "a", "com.example.my_app"}
@@ -107,6 +112,7 @@ func TestDefaultsProduceAValidConfig(t *testing.T) {
 	d.JavaVersion = "21"
 	d.VaadinVersion = "25.2.6"
 	d.BootVersion = "4.1.1"
+	d.Ports.From, d.Ports.To = 49000, 51000
 
 	if err := d.ToConfig().Validate(); err != nil {
 		t.Fatalf("the defaults do not produce a valid config: %v", err)
@@ -149,6 +155,7 @@ func TestAuthorIsOptionalButChecked(t *testing.T) {
 		GroupID: "com.example", ArtifactID: "my-app", ProjectName: "My App",
 		Package: "com.example.myapp", JavaVersion: "21",
 		VaadinVersion: "25.2.6", BootVersion: "4.1.1", OutputDir: "my-app",
+		AppPort: 49100, DatabasePort: 49200, AuthPort: 49300,
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("a config with no author should validate: %v", err)
@@ -178,5 +185,101 @@ func TestValidAuthorEmail(t *testing.T) {
 		if err := ValidAuthorEmail(s); err == nil {
 			t.Errorf("ValidAuthorEmail(%q) = nil, want an error", s)
 		}
+	}
+}
+
+// Three projects on one machine need three different ports each, and the range is
+// where they all come from — so the draw has to stay inside it, never repeat, and
+// step around whatever is already listening.
+func TestPickPortsStaysInRangeAndAvoidsWhatIsBusy(t *testing.T) {
+	busy := map[int]bool{49000: true, 49001: true, 49002: true}
+	original := portFree
+	portFree = func(port int) bool { return !busy[port] }
+	t.Cleanup(func() { portFree = original })
+
+	for range 50 {
+		ports := PickPorts(49000, 49006, 3)
+		if len(ports) != 3 {
+			t.Fatalf("PickPorts returned %d ports, want 3", len(ports))
+		}
+		seen := map[int]bool{}
+		for _, p := range ports {
+			if p < 49000 || p > 49006 {
+				t.Errorf("port %d is outside the range", p)
+			}
+			if busy[p] {
+				t.Errorf("port %d is busy and was picked while free ones remained", p)
+			}
+			if seen[p] {
+				t.Errorf("port %d was picked twice", p)
+			}
+			seen[p] = true
+		}
+	}
+
+	// With too few free ports the draw still fills up, from the busy ones: the
+	// project is not running yet, and a Config has to be produced.
+	ports := PickPorts(49000, 49003, 3)
+	if len(ports) != 3 {
+		t.Errorf("with one free port, PickPorts returned %d ports, want 3", len(ports))
+	}
+}
+
+func TestPortsMustBeUnprivilegedAndDistinct(t *testing.T) {
+	for _, n := range []int{1024, 49000, 65535} {
+		if err := ValidPort(n); err != nil {
+			t.Errorf("ValidPort(%d) = %v, want nil", n, err)
+		}
+	}
+	for _, n := range []int{0, 80, 1023, 65536, -1} {
+		if err := ValidPort(n); err == nil {
+			t.Errorf("ValidPort(%d) = nil, want an error", n)
+		}
+	}
+
+	c := Config{
+		GroupID: "com.example", ArtifactID: "my-app", ProjectName: "My App",
+		Package: "com.example.myapp", JavaVersion: "21",
+		VaadinVersion: "25.2.6", BootVersion: "4.1.1", OutputDir: "my-app",
+		AppPort: 49100, DatabasePort: 49100, AuthPort: 49300,
+	}
+	if err := c.Validate(); err == nil {
+		t.Error("two pieces on the same port should be refused")
+	}
+	c.DatabasePort = 49200
+	if err := c.Validate(); err != nil {
+		t.Errorf("three distinct ports should validate: %v", err)
+	}
+}
+
+// A personal defaults file that names a range no three ports fit in is stopped
+// before it produces a Config, with the path in the message.
+func TestDefaultsRefuseAnUnusablePortRange(t *testing.T) {
+	embedded := []byte("[ports]\nfrom = 49000\nto = 51000\n")
+	for _, body := range []string{
+		"[ports]\nfrom = 49000\nto = 49001\n",
+		"[ports]\nfrom = 80\nto = 90\n",
+		"[ports]\nfrom = 51000\nto = 49000\n",
+	} {
+		path := filepath.Join(t.TempDir(), "defaults.toml")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadDefaults(embedded, path); err == nil || !strings.Contains(err.Error(), path) {
+			t.Errorf("%q: LoadDefaults = %v, want an error naming %s", body, err, path)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "defaults.toml")
+	if err := os.WriteFile(path, []byte("[ports]\nfrom = 60000\nto = 60002\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := LoadDefaults(embedded, path)
+	if err != nil {
+		t.Fatalf("a range of exactly three ports should be accepted: %v", err)
+	}
+	c := d.ToConfig()
+	if c.AppPort < 60000 || c.AppPort > 60002 || c.DatabasePort < 60000 || c.DatabasePort > 60002 || c.AuthPort < 60000 || c.AuthPort > 60002 {
+		t.Errorf("ports %d, %d, %d were not drawn from the file's range", c.AppPort, c.DatabasePort, c.AuthPort)
 	}
 }

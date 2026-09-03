@@ -25,13 +25,13 @@
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "http://localhost:8080/*"
+        "http://localhost:{{.AppPort}}/*"
       ],
       "webOrigins": [
-        "http://localhost:8080"
+        "http://localhost:{{.AppPort}}"
       ],
       "attributes": {
-        "post.logout.redirect.uris": "http://localhost:8080/*"
+        "post.logout.redirect.uris": "http://localhost:{{.AppPort}}/*"
       }
     }
   ],

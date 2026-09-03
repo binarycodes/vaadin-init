@@ -28,7 +28,7 @@ import org.springframework.security.oauth2.core.AuthorizationGrantType;
 @TestConfiguration(proxyBeanMethods = false)
 public class TestSecurityConfiguration {
 
-    private static final String ISSUER = "http://localhost:8081/realms/{{.ArtifactID}}";
+    private static final String ISSUER = "http://localhost:{{.AuthPort}}/realms/{{.ArtifactID}}";
 
     @Bean
     ClientRegistrationRepository clientRegistrationRepository() {

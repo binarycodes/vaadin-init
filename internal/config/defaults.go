@@ -30,6 +30,27 @@ type Defaults struct {
 		Coverage  bool `toml:"coverage"`
 		Traceable bool `toml:"traceable"`
 	} `toml:"features"`
+	Ports struct {
+		From int `toml:"from"`
+		To   int `toml:"to"`
+	} `toml:"ports"`
+}
+
+// validate is what a user file has to get right for the values to be usable at
+// all. Only the port range: everything else is a suggestion the prompts and
+// Config.Validate can still refuse, but a range no port can be drawn from stops
+// the tool before there is a Config to validate.
+func (d Defaults) validate() error {
+	if err := ValidPort(d.Ports.From); err != nil {
+		return fmt.Errorf("ports.from: %w", err)
+	}
+	if err := ValidPort(d.Ports.To); err != nil {
+		return fmt.Errorf("ports.to: %w", err)
+	}
+	if d.Ports.To-d.Ports.From+1 < portsNeeded {
+		return fmt.Errorf("ports: the range %d-%d has room for fewer than %d ports", d.Ports.From, d.Ports.To, portsNeeded)
+	}
+	return nil
 }
 
 // UserDefaultsPath is where a personal defaults file is looked for. Resolved
@@ -76,6 +97,9 @@ func LoadDefaults(embedded []byte, explicitPath string) (Defaults, error) {
 	if err := toml.Unmarshal(content, &d); err != nil {
 		return d, fmt.Errorf("parsing defaults from %s: %w", path, err)
 	}
+	if err := d.validate(); err != nil {
+		return d, fmt.Errorf("defaults from %s: %w", path, err)
+	}
 	return d, nil
 }
 
@@ -100,6 +124,8 @@ func (d Defaults) ToConfig() Config {
 	c.ProjectName = DeriveProjectName(c.ArtifactID)
 	c.Package = DerivePackage(c.GroupID, c.ArtifactID)
 	c.OutputDir = c.ArtifactID
+	ports := PickPorts(d.Ports.From, d.Ports.To, portsNeeded)
+	c.AppPort, c.DatabasePort, c.AuthPort = ports[0], ports[1], ports[2]
 	return c
 }
 

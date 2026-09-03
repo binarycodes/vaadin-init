@@ -98,6 +98,9 @@ func run() error {
 	bootVersion := flags.String("boot-version", "", "Spring Boot version (default: the newest release found on Maven Central)")
 	javaVersion := flags.String("java-version", cfg.JavaVersion, "JDK major version the build pins")
 	outputDir := flags.String("dir", "", "where to write the project (default: the artifact id)")
+	appPort := flags.Int("app-port", cfg.AppPort, "port the application listens on")
+	databasePort := flags.Int("db-port", cfg.DatabasePort, "host port the dev stack's PostgreSQL is published on")
+	authPort := flags.Int("auth-port", cfg.AuthPort, "host port the dev stack's Keycloak is published on")
 	authorName := flags.String("author-name", "", "name for the first commit, kept in the new repository (default: what git has configured)")
 	authorEmail := flags.String("author-email", "", "email for the first commit, kept in the new repository (default: what git has configured)")
 
@@ -134,6 +137,7 @@ func run() error {
 	cfg.Database, cfg.Auth = *database, *auth
 	cfg.E2E, cfg.Coverage, cfg.Traceable = *e2e, *coverage, *traceable
 	cfg.AuthorName, cfg.AuthorEmail = *authorName, *authorEmail
+	cfg.AppPort, cfg.DatabasePort, cfg.AuthPort = *appPort, *databasePort, *authPort
 
 	// The derived answers follow the coordinates unless the user named one
 	// explicitly. Without this, --artifact-id on its own would generate a project
@@ -453,7 +457,7 @@ func outcome(cfg config.Config, result generate.Result) prompt.Outcome {
 		steps = append(steps, ui.Step{Command: "./run.sh env", Purpose: "bring up the development stack"})
 	}
 	steps = append(steps,
-		ui.Step{Command: "./run.sh run", Purpose: "start the application"},
+		ui.Step{Command: "./run.sh run", Purpose: fmt.Sprintf("start the application on http://localhost:%d", cfg.AppPort)},
 	)
 	if cfg.E2E {
 		steps = append(steps, ui.Step{Command: "./run.sh verify", Purpose: "unit tests and integration tests"})
@@ -471,11 +475,24 @@ func outcome(cfg config.Config, result generate.Result) prompt.Outcome {
 				"Spring Boot "+cfg.BootVersion,
 				"Java "+cfg.JavaVersion)},
 			{Label: "options", Value: options},
+			{Label: "ports", Value: ui.Join(ports(cfg)...)},
 			{Label: "git", Value: git},
 		},
 		Notice: result.GitMessage,
 		Steps:  steps,
 	}
+}
+
+// ports names the port each piece of the project takes, for the pieces it has.
+func ports(cfg config.Config) []string {
+	list := []string{fmt.Sprintf("app %d", cfg.AppPort)}
+	if cfg.Database {
+		list = append(list, fmt.Sprintf("postgres %d", cfg.DatabasePort))
+	}
+	if cfg.Auth {
+		list = append(list, fmt.Sprintf("keycloak %d", cfg.AuthPort))
+	}
+	return list
 }
 
 func printOutcome(o prompt.Outcome) {

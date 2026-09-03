@@ -25,6 +25,15 @@ java_version = "21"
 vaadin_version = "25.2.6"
 boot_version = "4.1.1"
 
+# Where the ports come from. Each generated project takes its own port for the
+# application, for PostgreSQL and for Keycloak, drawn at random from this range and
+# skipping any this machine is listening on when the project is generated — so two
+# projects can run side by side, and the second one does not fail on a port the
+# first one is holding. The three chosen ports are printed in the summary.
+[ports]
+from = 49000
+to = 51000
+
 # Which of the optional stack pieces start out selected. The lean core (Vaadin,
 # Spring Boot, the task runner, the commit-message hook, one view and one test) is
 # not listed because it is not optional.
