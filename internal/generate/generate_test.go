@@ -3,6 +3,7 @@ package generate
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -557,8 +558,9 @@ func TestTheAuthorIsKeptInTheRepository(t *testing.T) {
 // environment, half of each — is what the answer opens on.
 func TestCurrentAuthorIsWhatGitWouldCommitAs(t *testing.T) {
 	gitWithoutIdentity(t)
+	root := filepath.Join(t.TempDir(), "note-harbor")
 
-	author, err := CurrentAuthor()
+	author, err := CurrentAuthor(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,20 +572,26 @@ func TestCurrentAuthorIsWhatGitWouldCommitAs(t *testing.T) {
 	if err := os.WriteFile(global, []byte("[user]\n\tname = Ann Example\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	author, _ = CurrentAuthor()
+	author, _ = CurrentAuthor(root)
 	if author.Known() || author.Name != "Ann Example" || author.Email != "" {
 		t.Errorf("with only a name configured, author = %+v, want the name and no email", author)
 	}
 
 	t.Setenv("GIT_COMMITTER_EMAIL", "ann@example.invalid")
-	author, _ = CurrentAuthor()
+	author, _ = CurrentAuthor(root)
 	if !author.Known() || author != (Author{Name: "Ann Example", Email: "ann@example.invalid"}) {
 		t.Errorf("with a name and an email, author = %+v, want both", author)
 	}
+
+	// And nothing is left beside the project from asking.
+	if entries, err := os.ReadDir(filepath.Dir(root)); err != nil || len(entries) != 0 {
+		t.Errorf("asking left something behind: %v (%v)", entries, err)
+	}
 }
 
-// The identity of the repository the user happens to be standing in is not one
-// the new repository will have, so it must not be what stops the question.
+// The identity of the repository the user happens to be standing in is not one a
+// repository created inside it will have, so it must not be what stops the
+// question — however the output directory is named.
 func TestCurrentAuthorIgnoresTheRepositoryStoodIn(t *testing.T) {
 	gitWithoutIdentity(t)
 
@@ -599,11 +607,86 @@ func TestCurrentAuthorIgnoresTheRepositoryStoodIn(t *testing.T) {
 	}
 	t.Chdir(elsewhere)
 
-	author, err := CurrentAuthor()
+	for _, root := range []string{"note-harbor", filepath.Join(elsewhere, "note-harbor"), filepath.Join(t.TempDir(), "note-harbor")} {
+		author, err := CurrentAuthor(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if author.Known() {
+			t.Errorf("%s: author = %+v, taken from a repository the new one will not inherit from", root, author)
+		}
+	}
+}
+
+// Run again into a project that is already a repository — one whose identity was
+// set by hand after the first commit failed, say — the question is answered by
+// that repository's own config, which is the config the commit will use.
+func TestCurrentAuthorSeesTheOutputRepository(t *testing.T) {
+	gitWithoutIdentity(t)
+
+	root := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "--quiet"},
+		{"config", "user.name", "Ann Example"},
+		{"config", "user.email", "ann@example.invalid"},
+	} {
+		if output, err := gitOutput(t, root, args...); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+
+	author, err := CurrentAuthor(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if author.Known() {
-		t.Errorf("author = %+v, taken from a repository the new one will not inherit from", author)
+	if author != (Author{Name: "Ann Example", Email: "ann@example.invalid"}) {
+		t.Errorf("author = %+v, want the output repository's own", author)
 	}
+}
+
+// An identity that git supplies only under a directory — includeIf keyed on the
+// gitdir — is one the new repository will have, so it is found before it exists.
+func TestCurrentAuthorHonoursAConditionalInclude(t *testing.T) {
+	gitWithoutIdentity(t)
+
+	work := t.TempDir()
+	global := os.Getenv("GIT_CONFIG_GLOBAL")
+	included := filepath.Join(filepath.Dir(global), "work.gitconfig")
+	if err := os.WriteFile(included, []byte("[user]\n\tname = Ann Example\n\temail = ann@example.invalid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Keyed on both spellings of the directory: a temp dir is reached through a
+	// symlink on macOS and an 8.3 short name on Windows, and which one git sees
+	// is git's business, not this test's.
+	var include string
+	for _, dir := range spellings(t, work) {
+		include += fmt.Sprintf("[includeIf \"gitdir:%s/\"]\n\tpath = %s\n", filepath.ToSlash(dir), filepath.ToSlash(included))
+	}
+	if err := os.WriteFile(global, []byte(include), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	author, err := CurrentAuthor(filepath.Join(work, "note-harbor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if author != (Author{Name: "Ann Example", Email: "ann@example.invalid"}) {
+		t.Errorf("author = %+v, want the one the include supplies under %s", author, work)
+	}
+	if elsewhere, _ := CurrentAuthor(filepath.Join(t.TempDir(), "note-harbor")); elsewhere.Known() {
+		t.Errorf("author = %+v outside the included directory, want nothing", elsewhere)
+	}
+}
+
+// spellings is a path as given and as resolved, without repeating itself.
+func spellings(t *testing.T, path string) []string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved == path {
+		return []string{path}
+	}
+	return []string{path, resolved}
 }

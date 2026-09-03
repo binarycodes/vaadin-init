@@ -187,7 +187,7 @@ func run() error {
 	// scripted run has nobody to ask, and is left with the flags and the summary.
 	askAuthor := false
 	if interactive && writeOptions.Commit && (cfg.AuthorName == "" || cfg.AuthorEmail == "") {
-		if author, err := generate.CurrentAuthor(); err == nil && !author.Known() {
+		if author, err := generate.CurrentAuthor(cfg.OutputDir); err == nil && !author.Known() {
 			askAuthor = true
 			// Whichever half git had is offered back rather than asked again.
 			if cfg.AuthorName == "" {

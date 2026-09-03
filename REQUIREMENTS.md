@@ -85,8 +85,9 @@ the newest release found by the lookup wins, in the TUI and in `--yes` alike.
 
 2.7 `--author-name` and `--author-email` are for a machine whose git has no
 identity to commit with. Given, they are written to the new repository's own
-config before the first commit; not given, `generate.CurrentAuthor()` asks git who
-it would commit as, and the TUI asks for whichever half is missing (§6.2.6). Git's
+config before the first commit; not given, `generate.CurrentAuthor(dir)` asks git
+who it would commit as in the output directory, and the TUI asks for whichever
+half is missing (§6.2.6). Git's
 global configuration is never written.
 
 2.8 Exit codes: `0` success; `130` after a cancelled conversation, with
@@ -258,11 +259,15 @@ that does nothing.
 it, its two fields inline; it is there only when `Options.AskAuthor` is set. `main` sets it when there is a
 conversation to ask in (`--yes` is left with the flags and the summary), a commit
 is coming (`--no-git` and `--no-commit` both mean it is not) and
-`generate.CurrentAuthor()` reports that git would refuse one: it runs
-`git -c user.useConfigOnly=true var GIT_COMMITTER_IDENT` from a directory that is
-no repository, so an identity local to the repository the user is standing in does
-not count, and takes the name and email from the ident it prints. When git
-refuses, `git config --get user.name` and `user.email` supply whichever half is
+`generate.CurrentAuthor(dir)` reports that git would refuse one. It runs
+`git -c user.useConfigOnly=true var GIT_COMMITTER_IDENT` where the commit will
+happen: in the output directory when that is already a repository, otherwise in a
+throwaway repository created beside it (`.vaadin-init-*` under the nearest
+existing ancestor) and removed at once, falling back to a directory that is no
+repository when that cannot be made. This is what makes an `includeIf
+"gitdir:…"` identity count and an identity local to the repository the user is
+standing in — which a repository created inside it does not inherit — not count.
+The name and email come from the ident git prints. When git refuses, `git config --get user.name` and `user.email` supply whichever half is
 known, and the fields open on it. Both fields are required: a field with nothing
 offered rejects the empty answer in accessible mode too, where an empty answer
 normally means "keep what you offered". A machine with no git is not asked.
@@ -690,8 +695,10 @@ ships, existing history is untouched, and both `--no-commit` and `--no-git` are
 honoured. With every place git looks for an identity pointed at nothing, it checks
 that the commit is reported rather than made, that an author given goes into the
 repository's config and no further and is who the commit is by, and that
-`CurrentAuthor()` reports what git has — nothing, one half, both — and not the
-identity of the repository the test is standing in.
+`CurrentAuthor(dir)` reports what git has — nothing, one half, both — including
+an identity from the output directory's own repository or from a conditional
+include keyed on its parent, and not the identity of the repository the test is
+standing in; and that asking leaves nothing beside the project.
 
 13.2 `internal/prompt` drives the conversation two ways: through huh's accessible
 mode, and by stepping the full-screen model at a range of terminal sizes. The

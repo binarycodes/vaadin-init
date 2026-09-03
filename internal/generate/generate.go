@@ -350,27 +350,31 @@ func (a Author) Known() bool {
 	return a.Name != "" && a.Email != ""
 }
 
-// CurrentAuthor asks git who it would commit as on this machine, so that the
-// question can be asked before the commit is attempted rather than reported
-// after it has failed.
+// CurrentAuthor asks git who it would commit as in the repository about to be
+// created at root, so that the question can be asked before the commit is
+// attempted rather than reported after it has failed.
 //
-// Asked from a directory that is no repository, because the one the user happens
-// to be standing in can carry an identity of its own that the new repository will
-// not inherit. useConfigOnly makes git refuse to guess: what it would have guessed
-// — the login name at the host — is exactly what the prompt is there to replace.
-// When git refuses, whichever half it does have is still fetched, so the prompt
-// can open on it rather than on nothing.
+// Asked where the commit will happen, because that is the only place git answers
+// for: an identity in the config of the repository the user is standing in is not
+// inherited by a repository created inside it, and one supplied by a conditional
+// include keyed on the directory is not seen from anywhere else. useConfigOnly
+// makes git refuse to guess — what it would have guessed, the login name at the
+// host, is exactly what the prompt is there to replace. When git refuses,
+// whichever half it does have is still fetched, so the prompt can open on it.
 //
 // The error is git being absent, and nothing else: a machine with no git gets no
 // question, since there will be no commit to ask on behalf of.
-func CurrentAuthor() (Author, error) {
+func CurrentAuthor(root string) (Author, error) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		return Author{}, err
 	}
+	dir, done := askingPlace(git, root)
+	defer done()
+
 	output := func(args ...string) string {
 		command := exec.Command(git, args...)
-		command.Dir = os.TempDir()
+		command.Dir = dir
 		out, _ := command.Output()
 		return strings.TrimSpace(string(out))
 	}
@@ -384,6 +388,45 @@ func CurrentAuthor() (Author, error) {
 		Name:  output("config", "--get", "user.name"),
 		Email: output("config", "--get", "user.email"),
 	}, nil
+}
+
+// askingPlace is a directory git will answer for as it would for the new
+// repository, and what to do with it afterwards.
+//
+// The output directory itself when it already is a repository — its own config is
+// the one the commit will use. Otherwise a throwaway repository beside where the
+// project will go, since a repository is what a conditional include is keyed on
+// and a nested one inherits nothing from the repository around it. Beside rather
+// than inside: a directory left in the target by an interrupted run would be the
+// thing that makes the next run refuse to write there. If none of that is
+// possible, git is asked from a directory that is no repository at all, which
+// still gets everything the machine has configured.
+func askingPlace(git, root string) (string, func()) {
+	nothing := func() {}
+	if root, err := filepath.Abs(root); err == nil {
+		if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
+			return root, nothing
+		}
+		beside := filepath.Dir(root)
+		for {
+			if info, err := os.Stat(beside); err == nil && info.IsDir() {
+				break
+			}
+			if parent := filepath.Dir(beside); parent != beside {
+				beside = parent
+			} else {
+				break
+			}
+		}
+		if probe, err := os.MkdirTemp(beside, ".vaadin-init-*"); err == nil {
+			remove := func() { os.RemoveAll(probe) }
+			if exec.Command(git, "-C", probe, "init", "--quiet").Run() == nil {
+				return probe, remove
+			}
+			remove()
+		}
+	}
+	return os.TempDir(), nothing
 }
 
 // parseIdent reads `Name <email> <timestamp> <zone>`, the one form git var prints.
