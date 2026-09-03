@@ -3,6 +3,9 @@ package {{.Package}}.ui.view;
 import com.vaadin.browserless.SpringBrowserlessTest;
 import com.vaadin.flow.component.notification.Notification;
 import org.junit.jupiter.api.Assertions;
+{{- if .Database}}
+import org.junit.jupiter.api.BeforeEach;
+{{- end}}
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 {{- if .Database}}
@@ -23,6 +26,7 @@ import {{.Package}}.TestSecurityConfiguration;
 {{- end}}
 {{- if .Database}}
 import {{.Package}}.TestcontainersConfiguration;
+import {{.Package}}.notes.NoteRepository;
 import {{.Package}}.notes.service.NoteService;
 {{- end}}
 
@@ -57,6 +61,20 @@ class MainViewTest extends SpringBrowserlessTest {
 
     @Autowired
     private NoteService noteService;
+
+    @Autowired
+    private NoteRepository repository;
+
+    /**
+     * The Spring context, and with it the database container, is shared by every
+     * test in the class, so a note left behind by one test is a note the next one
+     * counts. Emptying the table is what lets each test state an exact count
+     * instead of a difference from whatever ran before it.
+     */
+    @BeforeEach
+    void emptyNotes() {
+        repository.deleteAll();
+    }
 {{- end}}
 
     @Test
