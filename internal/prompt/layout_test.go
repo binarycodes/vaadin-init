@@ -464,9 +464,9 @@ func TestGeneratingIsOneButton(t *testing.T) {
 	}
 }
 
-// The author is a column like the others, and only there when it was asked for:
-// a machine whose git knows its user gets the five sections it always had.
-func TestTheAuthorIsAColumnOnlyWhenAsked(t *testing.T) {
+// The author has a row of its own above the output, and only when it was asked
+// for: a machine whose git knows its user gets the five sections it always had.
+func TestTheAuthorIsARowAboveTheOutputOnlyWhenAsked(t *testing.T) {
 	c := seed()
 	s := newScreen(&c, offered(), Options{Banner: banner, AskAuthor: true})
 	s.Init()
@@ -486,8 +486,15 @@ func TestTheAuthorIsAColumnOnlyWhenAsked(t *testing.T) {
 		}
 	}
 	columns, rows := s.tiled.columns()
-	if len(columns) != 5 || len(rows) != 1 {
-		t.Errorf("%d columns and %d rows, want the author beside the others and the output still alone underneath", len(columns), len(rows))
+	shown := s.tiled.shown()
+	if len(columns) != 4 || len(rows) != 2 {
+		t.Fatalf("%d columns and %d rows, want the four columns with the author and the output under them", len(columns), len(rows))
+	}
+	if shown[rows[0]].title != authorTitle || shown[rows[1]].title != "Output" {
+		t.Errorf("rows are %q then %q, want the author above the output", shown[rows[0]].title, shown[rows[1]].title)
+	}
+	if strings.Index(on, "─ "+authorTitle+" ") > strings.Index(on, "─ Output ") {
+		t.Error("the author box is drawn below the output box")
 	}
 	if hints := ansi.ReplaceAllString(s.bar(), ""); !strings.Contains(hints, "alt+6") {
 		t.Errorf("the author section has no key of its own: %q", hints)

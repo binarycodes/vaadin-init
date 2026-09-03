@@ -225,7 +225,7 @@ mode.
 | 2 | Identity | What this project is called to people. | Project name, Description, Base package |
 | 3 | Versions | Newest first, from Maven Central. | Vaadin version, Spring Boot version, Java version |
 | 4 | Stack | The core is always generated. These are the rest. | one multi-select of five options |
-| — | Author | Git has no identity for the first commit. Kept in this repository only; git config --global sets one everywhere. | Name, Email — only when `Options.AskAuthor` (§6.2.6) |
+| — | Author | Git has no identity for the first commit. Kept in this repository only; git config --global sets one everywhere. | Name (inline), Email (inline) — a `span` row above Output, only when `Options.AskAuthor` (§6.2.6) |
 | 5 | Output | Created if it does not exist. Must be empty. | Directory (inline), Generate |
 
 6.2.2 Two further sections are hidden unless a version select was left on the
@@ -254,8 +254,8 @@ answer on one line) and its description is carried by the section.
 the confirm's toggle, accept and reject keys are disabled so the bar offers no key
 that does nothing.
 
-6.2.6 The Author section is a column like the others, before Output, and is
-there only when `Options.AskAuthor` is set. `main` sets it when there is a
+6.2.6 The Author section declares `span` like Output and is drawn directly above
+it, its two fields inline; it is there only when `Options.AskAuthor` is set. `main` sets it when there is a
 conversation to ask in (`--yes` is left with the flags and the summary), a commit
 is coming (`--no-git` and `--no-commit` both mean it is not) and
 `generate.CurrentAuthor()` reports that git would refuse one: it runs
@@ -701,7 +701,7 @@ back to one section at a time; that the bar is on the bottom row whatever is abo
 it; that only one question is ever active after a jump; that a derived answer
 follows the coordinates but a typed one is never taken back; that the version
 lists open on the newest release; that the escape hatch appears when a version is
-typed; that the author section is a column only when it is asked for, and that
+typed; that the author section is a row above the output only when it is asked for, and that
 its questions are asked in accessible mode, refuse an empty answer with nothing
 offered, and keep an offered half; that the output section is the only one with a row of its own and is drawn
 to the whole width; that generating is one button and the bar advertises no key

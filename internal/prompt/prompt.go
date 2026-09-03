@@ -595,18 +595,20 @@ func stackSelect(c *config.Config, features *[]string, title string) *huh.MultiS
 // one half already, so in accessible mode — where an empty answer normally means
 // "keep what you offered me" — an empty field is only allowed through when there
 // is something in it to keep.
-func authorNameInput(c *config.Config, options Options) *huh.Input {
+func authorNameInput(c *config.Config, options Options, inline bool) *huh.Input {
 	return huh.NewInput().
 		Prompt(ui.Caret).
-		Title("Name").
+		Title("Name  ").
+		Inline(inline).
 		Value(&c.AuthorName).
 		Validate(options.required(c.AuthorName, config.ValidAuthorName))
 }
 
-func authorEmailInput(c *config.Config, options Options) *huh.Input {
+func authorEmailInput(c *config.Config, options Options, inline bool) *huh.Input {
 	return huh.NewInput().
 		Prompt(ui.Caret).
-		Title("Email").
+		Title("Email ").
+		Inline(inline).
 		Value(&c.AuthorEmail).
 		Validate(options.required(c.AuthorEmail, config.ValidAuthorEmail))
 }
@@ -675,8 +677,8 @@ type fields struct {
 
 // spanning is a section with a row of its own under the columns, the width of
 // the screen.
-func spanning(title, description string, fields ...huh.Field) section {
-	s := newSection(title, description, nil, fields...)
+func spanning(title, description string, hide func() bool, fields ...huh.Field) section {
+	s := newSection(title, description, hide, fields...)
 	s.span = true
 	return s
 }
@@ -723,19 +725,20 @@ func newSections(
 		newSection("Stack", "The core is always generated. These are the rest.", nil,
 			stackSelect(c, features, "")),
 
-		// A column like the others, and only there when git could not answer for
-		// itself. Before Output rather than after, so the button that starts the
-		// whole thing stays the last thing on the screen.
-		newSection(authorTitle, authorDescription,
+		// A row of its own above Output, and only there when git could not answer
+		// for itself. Not a column: two short answers beside the tall ones would
+		// be a box mostly empty, and one more column is what pushes a terminal
+		// that tiled four out of tiling at all.
+		spanning(authorTitle, authorDescription,
 			func() bool { return !options.AskAuthor },
-			authorNameInput(c, options),
-			authorEmailInput(c, options)),
+			authorNameInput(c, options, true),
+			authorEmailInput(c, options, true)),
 
 		// Under everything rather than beside it: where the project goes is the
 		// last thing decided about it, and the button that starts the whole
 		// thing follows every answer above it rather than sitting at the foot of
 		// whichever column it happened to land in.
-		spanning("Output", "Created if it does not exist. Must be empty.",
+		spanning("Output", "Created if it does not exist. Must be empty.", nil,
 			f.directory,
 			// One button, not two. The other one is every other way out of this
 			// screen — ctrl+c, or never having run it — and a No beside the
@@ -802,8 +805,8 @@ func restForm(
 	// accessible mode, which would ask everyone who they are.
 	if options.AskAuthor {
 		groups = append(groups, huh.NewGroup(
-			authorNameInput(c, options),
-			authorEmailInput(c, options),
+			authorNameInput(c, options, false),
+			authorEmailInput(c, options, false),
 		).Title(authorTitle).
 			Description(authorDescription))
 	}
