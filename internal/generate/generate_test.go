@@ -754,3 +754,25 @@ func TestThePostgresVolumeIsMountedWhereTheImageKeepsItsData(t *testing.T) {
 		t.Error("the compose file still mounts the pre-18 data path")
 	}
 }
+
+// Keycloak's importer rejects any field its realm representation does not know,
+// so a note to the reader in the realm file — JSON has no comments — is a
+// Keycloak that never starts. The note lives in the README instead.
+func TestTheRealmCarriesOnlyFieldsKeycloakKnows(t *testing.T) {
+	c := baseConfig()
+	c.Auth = true
+	files := templates(t).renderMap(t, c)
+
+	var realm map[string]any
+	if err := json.Unmarshal([]byte(files["environment/dev/keycloak/realm.json"]), &realm); err != nil {
+		t.Fatal(err)
+	}
+	for key := range realm {
+		if strings.HasPrefix(key, "_") {
+			t.Errorf("realm.json has a %q field, which Keycloak refuses to import", key)
+		}
+	}
+	if !strings.Contains(files["README.md"], "realm.json") {
+		t.Error("the README says nothing about the realm file")
+	}
+}

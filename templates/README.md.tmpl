@@ -34,7 +34,7 @@ data away).
 | `src/main/resources/db/migration` | Flyway migrations. Flyway owns the schema; Hibernate only validates against it. |
 {{- end}}
 {{- if .ContainerRequired}}
-| `environment/dev` | The development stack. |
+| `environment/dev` | The development stack.{{if .Auth}} `keycloak/realm.json` is imported on start-up and holds development credentials only — it is committed, so nothing in it may ever be a secret that matters; a deployment configures its own realm and passes the client secret through the environment.{{end}} |
 {{- end}}
 
 ## The opinions
