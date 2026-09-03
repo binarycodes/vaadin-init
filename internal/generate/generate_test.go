@@ -476,6 +476,13 @@ func TestGitCanBeDeclinedEntirely(t *testing.T) {
 // nothing — the environment, the global file, the system file — because a
 // developer's own machine has all three filled in and would make these tests
 // pass for the wrong reason.
+//
+// The global file it is given is not quite empty: it turns user.useConfigOnly on.
+// Left to itself git guesses `login@hostname` and only refuses to commit when
+// the hostname has no domain, which is the case in a container and on most CI
+// runners and not on a laptop — so without this the same test passes in CI and
+// fails on the desk beside it. It is also the rule CurrentAuthor applies, so the
+// tests and the tool agree on what "no identity" means.
 func gitWithoutIdentity(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -491,7 +498,7 @@ func gitWithoutIdentity(t *testing.T) {
 	}
 	home := t.TempDir()
 	global := filepath.Join(home, "gitconfig")
-	if err := os.WriteFile(global, nil, 0o644); err != nil {
+	if err := os.WriteFile(global, []byte("[user]\n\tuseConfigOnly = true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
@@ -527,6 +534,12 @@ func TestWithoutAnAuthorTheCommitIsReportedNotMade(t *testing.T) {
 func TestTheAuthorIsKeptInTheRepository(t *testing.T) {
 	gitWithoutIdentity(t)
 
+	global := os.Getenv("GIT_CONFIG_GLOBAL")
+	before, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	c := baseConfig()
 	c.OutputDir = t.TempDir()
 	c.AuthorName, c.AuthorEmail = "Ann Example", "ann@example.invalid"
@@ -550,9 +563,9 @@ func TestTheAuthorIsKeptInTheRepository(t *testing.T) {
 		t.Errorf("the repository's own user.email = %q (%v)", email, err)
 	}
 
-	// And the global configuration is exactly as empty as it was.
-	if global, err := gitOutput(t, result.Root, "config", "--global", "--list"); global != "" {
-		t.Errorf("the global configuration was written to: %q (%v)", global, err)
+	// And the global configuration is exactly as it was.
+	if after, err := os.ReadFile(global); err != nil || string(after) != string(before) {
+		t.Errorf("the global configuration was written to: %q (%v)", after, err)
 	}
 }
 
