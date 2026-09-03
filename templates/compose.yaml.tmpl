@@ -22,7 +22,10 @@ services:
       # at the same time. application.properties points at the same number.
       - "{{.DatabasePort}}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      # The image's data root, not the `data` directory under it that older images
+      # used: from 18 the data lives in a major-version subdirectory here, and a
+      # volume on the old path is what makes the container refuse to start.
+      - postgres-data:/var/lib/postgresql
     healthcheck:
       # -U and -d rather than a bare pg_isready: during initialisation the server
       # accepts connections on the postgres database before the project's own

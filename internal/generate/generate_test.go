@@ -740,3 +740,17 @@ func TestThePortsAreTheProjectsOwnEverywhere(t *testing.T) {
 		}
 	}
 }
+
+// The postgres image changed where it keeps its data in 18: a volume on the old
+// path is not merely ignored, the container refuses to start over it.
+func TestThePostgresVolumeIsMountedWhereTheImageKeepsItsData(t *testing.T) {
+	c := baseConfig()
+	c.Database = true
+	compose := templates(t).renderMap(t, c)["environment/dev/compose.yaml"]
+	if !strings.Contains(compose, "postgres-data:/var/lib/postgresql\n") {
+		t.Error("the data volume is not mounted at /var/lib/postgresql")
+	}
+	if strings.Contains(compose, "/var/lib/postgresql/data") {
+		t.Error("the compose file still mounts the pre-18 data path")
+	}
+}

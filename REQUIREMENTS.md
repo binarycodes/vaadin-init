@@ -677,7 +677,7 @@ an issuer the browser can reach, on the auth port.
 12.9 `environment/dev/compose.yaml` is named after the container prefix and
 declares a healthcheck per service: `postgres:18-alpine` with the derived database
 name, user and password `dev`, published on the database port with a named
-volume, and `quay.io/keycloak/keycloak:26.0` in `start-dev --import-realm`
+volume mounted at `/var/lib/postgresql` (the 18+ image's data root), and `quay.io/keycloak/keycloak:26.0` in `start-dev --import-realm`
 published on the auth port (its management port 9000 is reached by the healthcheck
 inside the container and not published), importing
 `environment/dev/keycloak/realm.json` — a realm named after the artifact id,
