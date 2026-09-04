@@ -2,7 +2,7 @@
 
 {{if .Description}}{{.Description}}
 
-{{end}}Vaadin {{.VaadinVersion}} on Spring Boot {{.BootVersion}}, Java {{.JavaVersion}}.
+{{end}}Vaadin {{.VaadinVersion}} on Spring Boot {{.BootVersion}}, Java {{.JavaVersion}}, the {{.ThemeName}} theme.
 
 ## Running it
 
@@ -54,6 +54,26 @@ learns to scroll past.
 separately, so a rule written directly in `styles.css` is a rule that cannot be
 cached apart from every other rule. `./run.sh styles` exists because editing a
 partial leaves `styles.css` untouched and the browser then serves a stale 304.
+{{- if .Aura}}
+
+**The theme is Aura.** Vaadin 25's default, loaded by `@StyleSheet(Aura.STYLESHEET)`
+on `Application`. Lumo is one edit away: replace that annotation with
+`@StyleSheet(Lumo.STYLESHEET)` and `@StyleSheet(Lumo.UTILITY_STYLESHEET)`, and
+change the import. Aura defines `--aura-*` style properties and Lumo `--lumo-*`;
+a `--lumo-*` property does nothing here. The project's own stylesheets use the
+`--vaadin-*` properties, which every theme defines, so they survive the swap.
+{{- else}}
+
+**The theme is Lumo, with the Lumo Utility Classes.** Loaded by
+`@StyleSheet(Lumo.STYLESHEET)` and `@StyleSheet(Lumo.UTILITY_STYLESHEET)` on
+`Application`. The second one matters: in Vaadin 25 nothing else loads the
+utility classes, and a layout built from `LumoUtility` constants without them
+renders with no styles and no error. Aura, Vaadin 25's default, is one edit away:
+replace both annotations with `@StyleSheet(Aura.STYLESHEET)` and change the
+import — and stop using `LumoUtility`, which has no Aura counterpart. The
+project's own stylesheets use the `--vaadin-*` properties, which every theme
+defines, so they survive the swap.
+{{- end}}
 
 **Test ids, not selectors.** Views set `setTestId(...)`, and the tests locate
 elements by `data-testid`. A CSS path into the component tree breaks when a layout

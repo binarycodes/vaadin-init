@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestValidGroupID(t *testing.T) {
@@ -112,10 +114,56 @@ func TestDefaultsProduceAValidConfig(t *testing.T) {
 	d.JavaVersion = "21"
 	d.VaadinVersion = "25.2.6"
 	d.BootVersion = "4.1.1"
+	d.Theme = ThemeAura
 	d.Ports.From, d.Ports.To = 49000, 51000
 
 	if err := d.ToConfig().Validate(); err != nil {
 		t.Fatalf("the defaults do not produce a valid config: %v", err)
+	}
+}
+
+// The shipped defaults file has to reach a valid Config with every key carried
+// over: a key added to the file and forgotten in ToConfig would otherwise fall to
+// its zero value and be caught, if at all, by whoever generates the next project.
+func TestTheShippedDefaultsReachTheConfig(t *testing.T) {
+	embedded, err := os.ReadFile("../../defaults.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Defaults
+	if err := toml.Unmarshal(embedded, &d); err != nil {
+		t.Fatalf("defaults.toml is not valid TOML: %v", err)
+	}
+	c := d.ToConfig()
+	if err := c.Validate(); err != nil {
+		t.Fatalf("the shipped defaults do not produce a valid config: %v", err)
+	}
+	if c.Theme != ThemeAura {
+		t.Errorf("theme = %q, want the Vaadin 25 default", c.Theme)
+	}
+}
+
+// A theme is one of two, and always one: an empty theme would render an
+// Application with no stylesheet at all, which compiles and looks broken.
+func TestValidTheme(t *testing.T) {
+	for _, s := range []string{ThemeAura, ThemeLumo} {
+		if err := ValidTheme(s); err != nil {
+			t.Errorf("ValidTheme(%q) = %v, want nil", s, err)
+		}
+	}
+	for _, s := range []string{"", "Aura", "material", "lumo "} {
+		if err := ValidTheme(s); err == nil {
+			t.Errorf("ValidTheme(%q) = nil, want an error", s)
+		}
+	}
+
+	c := Config{Theme: ThemeAura}
+	if !c.Aura() || c.Lumo() || c.ThemeName() != "Aura" {
+		t.Errorf("an aura config reports Aura=%v Lumo=%v name=%q", c.Aura(), c.Lumo(), c.ThemeName())
+	}
+	c.Theme = ThemeLumo
+	if c.Aura() || !c.Lumo() || c.ThemeName() != "Lumo" {
+		t.Errorf("a lumo config reports Aura=%v Lumo=%v name=%q", c.Aura(), c.Lumo(), c.ThemeName())
 	}
 }
 
@@ -154,7 +202,7 @@ func TestAuthorIsOptionalButChecked(t *testing.T) {
 	c := Config{
 		GroupID: "com.example", ArtifactID: "my-app", ProjectName: "My App",
 		Package: "com.example.myapp", JavaVersion: "21",
-		VaadinVersion: "25.2.6", BootVersion: "4.1.1", OutputDir: "my-app",
+		VaadinVersion: "25.2.6", BootVersion: "4.1.1", Theme: ThemeAura, OutputDir: "my-app",
 		AppPort: 49100, DatabasePort: 49200, AuthPort: 49300,
 	}
 	if err := c.Validate(); err != nil {
@@ -240,7 +288,7 @@ func TestPortsMustBeUnprivilegedAndDistinct(t *testing.T) {
 	c := Config{
 		GroupID: "com.example", ArtifactID: "my-app", ProjectName: "My App",
 		Package: "com.example.myapp", JavaVersion: "21",
-		VaadinVersion: "25.2.6", BootVersion: "4.1.1", OutputDir: "my-app",
+		VaadinVersion: "25.2.6", BootVersion: "4.1.1", Theme: ThemeAura, OutputDir: "my-app",
 		AppPort: 49100, DatabasePort: 49100, AuthPort: 49300,
 	}
 	if err := c.Validate(); err == nil {

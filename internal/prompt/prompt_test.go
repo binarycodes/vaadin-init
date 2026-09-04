@@ -18,6 +18,7 @@ func seed() config.Config {
 		JavaVersion:   "21",
 		VaadinVersion: "25.2.6",
 		BootVersion:   "4.1.1",
+		Theme:         config.ThemeAura,
 		Database:      true,
 		E2E:           true,
 		Coverage:      true,
@@ -133,7 +134,7 @@ func TestStackSelectionIsAppliedBothWays(t *testing.T) {
 		return ""
 	}
 
-	blanks := strings.Repeat("\n", 8) // through to the stack question
+	blanks := strings.Repeat("\n", 9) // through to the stack question
 	answers := blanks +
 		position("auth") + "\n" + // on
 		position("database") + "\n" + // off
@@ -155,6 +156,40 @@ func TestStackSelectionIsAppliedBothWays(t *testing.T) {
 	// cleared by the answer that named neither of them.
 	if !got.E2E || !got.Coverage || !got.Traceable {
 		t.Errorf("untouched options should have kept their seeded values: %v", got.Selected())
+	}
+}
+
+// The theme is asked at the head of the stack, as a numbered list; its number
+// reaches the Config, and a blank line keeps the default.
+func TestTheThemeIsAskedAndReachesTheConfig(t *testing.T) {
+	position := func(theme string) string {
+		for i, option := range themeOptions {
+			if option.Value == theme {
+				return strconv.Itoa(i + 1)
+			}
+		}
+		t.Fatalf("no option for %q", theme)
+		return ""
+	}
+
+	upToTheTheme := strings.Repeat("\n", 8) // coordinates, identity, versions
+	got, err := run(t, upToTheTheme+position(config.ThemeLumo)+"\n"+"0\n"+"\n\n")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got.Theme != config.ThemeLumo {
+		t.Errorf("theme = %q, want the one chosen", got.Theme)
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("the answers do not validate: %v", err)
+	}
+
+	got, err = run(t, strings.Repeat("\n", 40))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got.Theme != config.ThemeAura {
+		t.Errorf("theme = %q, want the seeded default kept", got.Theme)
 	}
 }
 
@@ -276,9 +311,10 @@ func runAsking(t *testing.T, c config.Config, answers string) (config.Config, er
 }
 
 // upToTheAuthor accepts every answer before the author question: the two
-// coordinates, the three identity answers, the three versions, and the stack —
-// which, being a multi-select, is confirmed with a 0 rather than a blank line.
-const upToTheAuthor = "\n\n" + "\n\n\n" + "\n\n\n" + "0\n"
+// coordinates, the three identity answers, the three versions, the theme, and
+// the stack — which, being a multi-select, is confirmed with a 0 rather than a
+// blank line.
+const upToTheAuthor = "\n\n" + "\n\n\n" + "\n\n\n" + "\n" + "0\n"
 
 // Who the first commit is by is asked when git cannot say, and with nothing to
 // fall back on the question keeps being asked until it has an answer: the blank

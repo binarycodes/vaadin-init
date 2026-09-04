@@ -526,7 +526,6 @@ func groupIDInput(c *config.Config, options Options) *huh.Input {
 	return huh.NewInput().
 		Prompt(ui.Caret).
 		Title("Group ID").
-		Description("Maven group, in reverse-DNS form.").
 		Value(&c.GroupID).
 		Validate(options.validator(config.ValidGroupID))
 }
@@ -535,7 +534,6 @@ func artifactIDInput(c *config.Config, options Options) *huh.Input {
 	return huh.NewInput().
 		Prompt(ui.Caret).
 		Title("Artifact ID").
-		Description("Maven artifact. Also names the directory and the containers.").
 		Value(&c.ArtifactID).
 		Validate(options.validator(config.ValidArtifactID))
 }
@@ -544,7 +542,6 @@ func projectNameInput(c *config.Config, options Options) *huh.Input {
 	return huh.NewInput().
 		Prompt(ui.Caret).
 		Title("Project name").
-		Description("The name that appears in the UI and in the task runner's output.").
 		Value(&c.ProjectName).
 		Validate(options.validator(config.ValidProjectName))
 }
@@ -560,23 +557,18 @@ func packageInput(c *config.Config, options Options) *huh.Input {
 	return huh.NewInput().
 		Prompt(ui.Caret).
 		Title("Base package").
-		Description("Where the generated Java sources live.").
 		Value(&c.Package).
 		Validate(options.validator(config.ValidPackage))
 }
 
 // stackSelect asks which of the optional pieces to generate.
 //
-// The title is the caller's because it is only worth a row where the question is
-// not already introduced: on the full-screen form the section above it says
-// "Stack", and saying it twice costs a line of the list.
-func stackSelect(c *config.Config, features *[]string, title string) *huh.MultiSelect[string] {
-	rows := len(featureList)
-	if title != "" {
-		rows++
-	}
+// Titled, although the section already says what it is about: the theme select
+// above it in the same section has a title, and a list with none under a select
+// with one reads as more of the theme's options.
+func stackSelect(c *config.Config, features *[]string) *huh.MultiSelect[string] {
 	return huh.NewMultiSelect[string]().
-		Title(title).
+		Title("Features").
 		// Value before Options, for the reason given in versionSelect.
 		Value(features).
 		Options(featureOptions(*c)...).
@@ -588,7 +580,38 @@ func stackSelect(c *config.Config, features *[]string, title string) *huh.MultiS
 		// The field carries no description for the same reason — a line of prose
 		// here is a line the list does not get — and the help footer already says
 		// "x toggle • enter confirm".
-		Height(rows)
+		Height(len(featureList) + 1)
+}
+
+// The section that asks what goes in the project: the theme, and the optional
+// pieces. In the words both forms use.
+const (
+	stackTitle       = "Stack"
+	stackDescription = "The core is always generated. Choose its theme, and the rest."
+)
+
+// themeOptions are the two themes in the order they are offered, the default
+// first. A variable rather than written into the select, so a test can find a
+// theme's position in the list the way a screen reader is read it.
+var themeOptions = []huh.Option[string]{
+	huh.NewOption("Aura", config.ThemeAura),
+	huh.NewOption("Lumo", config.ThemeLumo),
+}
+
+// themeSelect asks which of the two Vaadin themes the project loads.
+//
+// In the Stack section rather than one of its own: two options do not fill a
+// column, and a sixth column is what takes the width from the other five that
+// pushes a terminal which tiled out of tiling.
+func themeSelect(c *config.Config) *huh.Select[string] {
+	return huh.NewSelect[string]().
+		Title("Theme").
+		// One line at the narrowest column that tiles. The utility classes that
+		// come with Lumo are said where they are loaded, in the generated code.
+		Description("Aura is the Vaadin 25 default.").
+		// Value before Options, for the reason given in versionSelect.
+		Value(&c.Theme).
+		Options(themeOptions...)
 }
 
 // The two halves of who the first commit is by. Nothing is offered unless git had
@@ -722,8 +745,9 @@ func newSections(
 			f.boot,
 			javaVersionInput(c, options)),
 
-		newSection("Stack", "The core is always generated. These are the rest.", nil,
-			stackSelect(c, features, "")),
+		newSection(stackTitle, stackDescription, nil,
+			themeSelect(c),
+			stackSelect(c, features)),
 
 		// A row of its own above Output, and only there when git could not answer
 		// for itself. Not a column: two short answers beside the tall ones would
@@ -796,9 +820,10 @@ func restForm(
 		versionGroup(c, available, options),
 
 		huh.NewGroup(
-			stackSelect(c, features, "Stack"),
-		).Title("Stack").
-			Description("The core is always generated. These are the rest."),
+			themeSelect(c),
+			stackSelect(c, features),
+		).Title(stackTitle).
+			Description(stackDescription),
 	}
 
 	// Left out rather than hidden: huh asks a hidden group's questions anyway in

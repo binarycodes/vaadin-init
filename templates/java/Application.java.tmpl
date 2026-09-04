@@ -2,7 +2,11 @@ package {{.Package}};
 
 import com.vaadin.flow.component.dependency.StyleSheet;
 import com.vaadin.flow.component.page.AppShellConfigurator;
+{{- if .Aura}}
+import com.vaadin.flow.theme.aura.Aura;
+{{- else}}
 import com.vaadin.flow.theme.lumo.Lumo;
+{{- end}}
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
@@ -14,13 +18,20 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * up front with the application shell, so the first view to render is already
  * styled. A stylesheet pulled in by a view arrives after that view exists, which
  * is visible as a flash of unstyled content.
+{{- if .Lumo}}
  *
- * <p>{@code @Theme} and a theme folder are the Vaadin 24 way and are deprecated
- * in Vaadin 25; {@code @StyleSheet} against
- * {@code src/main/resources/META-INF/resources} is the replacement.
+ * <p>Lumo's utility classes are a stylesheet of their own, loaded here with the
+ * theme: a layout built from {@code LumoUtility} constants without it renders
+ * unstyled and reports no error.
+{{- end}}
  */
 @SpringBootApplication
+{{- if .Aura}}
+@StyleSheet(Aura.STYLESHEET)
+{{- else}}
 @StyleSheet(Lumo.STYLESHEET)
+@StyleSheet(Lumo.UTILITY_STYLESHEET)
+{{- end}}
 @StyleSheet("styles.css")
 public class Application implements AppShellConfigurator {
 

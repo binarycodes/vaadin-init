@@ -107,9 +107,11 @@ jobs:
             flags: --database=false --auth=false --e2e=false --coverage=false --traceable=false
           # Everything on, which is the combination with the most templates in it
           # and the only one that exercises Flyway, JPA, Testcontainers, the OIDC
-          # configuration and the coverage gate together.
+          # configuration and the coverage gate together. On Lumo, so that both
+          # themes are compiled by a real JDK without a third job; the core leg
+          # is left on the Aura default.
           - name: full
-            flags: --database --auth --e2e --coverage --traceable
+            flags: --database --auth --e2e --coverage --traceable --theme lumo
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 

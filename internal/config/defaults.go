@@ -23,6 +23,7 @@ type Defaults struct {
 	JavaVersion   string `toml:"java_version"`
 	VaadinVersion string `toml:"vaadin_version"`
 	BootVersion   string `toml:"boot_version"`
+	Theme         string `toml:"theme"`
 	Features      struct {
 		Database  bool `toml:"database"`
 		Auth      bool `toml:"auth"`
@@ -115,6 +116,7 @@ func (d Defaults) ToConfig() Config {
 		JavaVersion:   d.JavaVersion,
 		VaadinVersion: d.VaadinVersion,
 		BootVersion:   d.BootVersion,
+		Theme:         d.Theme,
 		Database:      d.Features.Database,
 		Auth:          d.Features.Auth,
 		E2E:           d.Features.E2E,

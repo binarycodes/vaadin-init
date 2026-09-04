@@ -35,6 +35,11 @@ type Config struct {
 	VaadinVersion string
 	BootVersion   string
 
+	// The Vaadin theme the project loads: ThemeAura or ThemeLumo. Always one of
+	// them — a theme is not an optional piece — so it is not among the booleans
+	// below and Selected does not list it.
+	Theme string
+
 	// The optional stack pieces. The lean core is not represented because it is
 	// not a choice.
 	Database  bool
@@ -62,6 +67,31 @@ type Config struct {
 	// bootstraps one project has no business editing the settings of every other.
 	AuthorName  string
 	AuthorEmail string
+}
+
+// The two themes Vaadin ships. Aura is the default for new work on Vaadin 25;
+// Lumo is the earlier theme, kept for projects that have to match a design
+// already built on it.
+const (
+	ThemeAura = "aura"
+	ThemeLumo = "lumo"
+)
+
+// Aura and Lumo keep the theme conditional out of the templates, which would
+// otherwise each compare the string and each be able to misspell it.
+func (c Config) Aura() bool { return c.Theme == ThemeAura }
+func (c Config) Lumo() bool { return c.Theme == ThemeLumo }
+
+// ThemeName is the theme as it is written for a person: in the summary and in
+// the generated README.
+func (c Config) ThemeName() string {
+	switch c.Theme {
+	case ThemeAura:
+		return "Aura"
+	case ThemeLumo:
+		return "Lumo"
+	}
+	return c.Theme
 }
 
 // PackagePath is the base package as a directory path, for the src/main/java
@@ -170,6 +200,7 @@ func (c Config) Validate() error {
 		{"java version", ValidJavaVersion(c.JavaVersion)},
 		{"vaadin version", ValidVersion(c.VaadinVersion)},
 		{"spring boot version", ValidVersion(c.BootVersion)},
+		{"theme", ValidTheme(c.Theme)},
 		{"author name", validIfSet(c.AuthorName, ValidAuthorName)},
 		{"author email", validIfSet(c.AuthorEmail, ValidAuthorEmail)},
 	} {
@@ -332,6 +363,14 @@ func ValidVersion(s string) error {
 		return fmt.Errorf("must look like 25.2.6 or 25.3.0-beta1; got %q", s)
 	}
 	return nil
+}
+
+func ValidTheme(s string) error {
+	switch s {
+	case ThemeAura, ThemeLumo:
+		return nil
+	}
+	return fmt.Errorf("must be %s or %s; got %q", ThemeAura, ThemeLumo, s)
 }
 
 // validIfSet applies a rule only to an answer that was given. The author fields

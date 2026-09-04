@@ -25,6 +25,12 @@ java_version = "21"
 vaadin_version = "25.2.6"
 boot_version = "4.1.1"
 
+# The Vaadin theme the generated project loads. Aura is Vaadin 25's default and
+# the one new work should start on; lumo is the earlier theme, kept for projects
+# that have to match an existing Lumo-based design, and comes with the Lumo
+# Utility Classes.
+theme = "aura"
+
 # Where the ports come from. Each generated project takes its own port for the
 # application, for PostgreSQL and for Keycloak, drawn at random from this range and
 # skipping any this machine is listening on when the project is generated — so two

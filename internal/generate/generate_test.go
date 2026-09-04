@@ -31,6 +31,7 @@ func baseConfig() config.Config {
 		JavaVersion:   "21",
 		VaadinVersion: "25.2.6",
 		BootVersion:   "4.1.1",
+		Theme:         config.ThemeAura,
 		OutputDir:     "note-harbor",
 		AppPort:       49100,
 		DatabasePort:  49200,
@@ -38,21 +39,33 @@ func baseConfig() config.Config {
 	}
 }
 
-// everyCombination enumerates all 32 combinations of the five options, so that a
-// template conditional that only holds for the combinations someone happened to
-// try by hand fails here instead.
+// everyCombination enumerates all 32 combinations of the five options under each
+// of the two themes, so that a template conditional that only holds for the
+// combinations someone happened to try by hand fails here instead.
 func everyCombination() []config.Config {
 	var all []config.Config
-	for bits := 0; bits < 32; bits++ {
-		c := baseConfig()
-		c.Database = bits&1 != 0
-		c.Auth = bits&2 != 0
-		c.E2E = bits&4 != 0
-		c.Coverage = bits&8 != 0
-		c.Traceable = bits&16 != 0
-		all = append(all, c)
+	for _, theme := range []string{config.ThemeAura, config.ThemeLumo} {
+		for bits := 0; bits < 32; bits++ {
+			c := baseConfig()
+			c.Theme = theme
+			c.Database = bits&1 != 0
+			c.Auth = bits&2 != 0
+			c.E2E = bits&4 != 0
+			c.Coverage = bits&8 != 0
+			c.Traceable = bits&16 != 0
+			all = append(all, c)
+		}
 	}
 	return all
+}
+
+// describe names a combination for a subtest and a failure message.
+func describe(c config.Config) string {
+	name := strings.Join(c.Selected(), "+")
+	if name == "" {
+		name = "core-only"
+	}
+	return c.Theme + "/" + name
 }
 
 func (g *Generator) renderMap(t *testing.T, c config.Config) map[string]string {
@@ -72,11 +85,7 @@ func TestEveryCombinationRendersWellFormedFiles(t *testing.T) {
 	g := templates(t)
 
 	for _, c := range everyCombination() {
-		name := strings.Join(c.Selected(), "+")
-		if name == "" {
-			name = "core-only"
-		}
-		t.Run(name, func(t *testing.T) {
+		t.Run(describe(c), func(t *testing.T) {
 			files := g.renderMap(t, c)
 
 			pom, ok := files["pom.xml"]
@@ -149,7 +158,7 @@ func TestCoreFilesAreAlwaysGenerated(t *testing.T) {
 		files := g.renderMap(t, c)
 		for _, path := range core {
 			if _, ok := files[path]; !ok {
-				t.Errorf("%s missing for %v", path, c.Selected())
+				t.Errorf("%s missing for %s", path, describe(c))
 			}
 		}
 	}
@@ -212,6 +221,63 @@ func TestPomNamesADependencyOnlyWhenItIsUsed(t *testing.T) {
 			present := strings.Contains(pom, tc.fragment)
 			if want := tc.want(c); present != want {
 				t.Errorf("pom mentions %q = %v, want %v for %v", tc.fragment, present, want, c.Selected())
+			}
+		}
+	}
+}
+
+// The application shell loads exactly the theme that was chosen, and nothing of
+// the other one: a stray Lumo import in an Aura project is a compile error at
+// best, and both themes loaded at once is a cascade nobody can reason about.
+//
+// Lumo brings its utility classes with it. Nothing else loads them in Vaadin 25,
+// and a layout built from LumoUtility constants without them renders unstyled
+// and reports no error anywhere.
+func TestTheApplicationLoadsTheChosenThemeOnly(t *testing.T) {
+	g := templates(t)
+	application := "src/main/java/com/example/tools/noteharbor/Application.java"
+
+	for _, c := range everyCombination() {
+		files := g.renderMap(t, c)
+		body := files[application]
+
+		want := []string{"import com.vaadin.flow.theme.aura.Aura;", "@StyleSheet(Aura.STYLESHEET)"}
+		absent := "Lumo"
+		if c.Lumo() {
+			want = []string{
+				"import com.vaadin.flow.theme.lumo.Lumo;",
+				"@StyleSheet(Lumo.STYLESHEET)",
+				"@StyleSheet(Lumo.UTILITY_STYLESHEET)",
+			}
+			absent = "Aura"
+		}
+		for _, fragment := range want {
+			if !strings.Contains(body, fragment) {
+				t.Errorf("%s: Application.java does not contain %q", describe(c), fragment)
+			}
+		}
+		if strings.Contains(body, absent) {
+			t.Errorf("%s: Application.java mentions %s", describe(c), absent)
+		}
+		if !strings.Contains(files["README.md"], c.ThemeName()) {
+			t.Errorf("%s: the README does not name the theme", describe(c))
+		}
+	}
+}
+
+// The project's own stylesheets are written against the base style properties,
+// which both themes define, so the file is the same whichever theme is chosen and
+// a view's styles need no theme conditional to stay correct as the project grows.
+func TestTheStylesheetsNameNoThemeOfTheirOwn(t *testing.T) {
+	for _, c := range everyCombination() {
+		for path, body := range templates(t).renderMap(t, c) {
+			if !strings.HasSuffix(path, ".css") {
+				continue
+			}
+			for _, prefix := range []string{"--lumo-", "--aura-"} {
+				if strings.Contains(body, prefix) {
+					t.Errorf("%s: %s uses a %s* property, which only one theme defines", describe(c), path, prefix)
+				}
 			}
 		}
 	}

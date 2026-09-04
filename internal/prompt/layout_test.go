@@ -98,7 +98,7 @@ func TestEverySectionIsOnScreenAtOnce(t *testing.T) {
 			t.Errorf("stack option %q is not on the screen", label)
 		}
 	}
-	for _, answer := range []string{"com.example", "my-app", "My App", "com.example.myapp", "Generate"} {
+	for _, answer := range []string{"com.example", "my-app", "My App", "com.example.myapp", "Theme", "Aura", "Lumo", "Features", "Generate"} {
 		if !strings.Contains(on, answer) {
 			t.Errorf("answer %q is not on the screen", answer)
 		}

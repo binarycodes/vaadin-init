@@ -97,6 +97,7 @@ func run() error {
 	vaadinVersion := flags.String("vaadin-version", "", "Vaadin version (default: the newest release found on Maven Central)")
 	bootVersion := flags.String("boot-version", "", "Spring Boot version (default: the newest release found on Maven Central)")
 	javaVersion := flags.String("java-version", cfg.JavaVersion, "JDK major version the build pins")
+	theme := flags.String("theme", cfg.Theme, "Vaadin theme the project loads: aura or lumo")
 	outputDir := flags.String("dir", "", "where to write the project (default: the artifact id)")
 	appPort := flags.Int("app-port", cfg.AppPort, "port the application listens on")
 	databasePort := flags.Int("db-port", cfg.DatabasePort, "host port the dev stack's PostgreSQL is published on")
@@ -134,6 +135,7 @@ func run() error {
 	cfg.ArtifactID = *artifactID
 	cfg.Description = *description
 	cfg.JavaVersion = *javaVersion
+	cfg.Theme = *theme
 	cfg.Database, cfg.Auth = *database, *auth
 	cfg.E2E, cfg.Coverage, cfg.Traceable = *e2e, *coverage, *traceable
 	cfg.AuthorName, cfg.AuthorEmail = *authorName, *authorEmail
@@ -473,7 +475,8 @@ func outcome(cfg config.Config, result generate.Result) prompt.Outcome {
 			{Label: "stack", Value: ui.Join(
 				"Vaadin "+cfg.VaadinVersion,
 				"Spring Boot "+cfg.BootVersion,
-				"Java "+cfg.JavaVersion)},
+				"Java "+cfg.JavaVersion,
+				cfg.ThemeName())},
 			{Label: "options", Value: options},
 			{Label: "ports", Value: ui.Join(ports(cfg)...)},
 			{Label: "git", Value: git},

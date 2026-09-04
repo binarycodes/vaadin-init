@@ -54,6 +54,7 @@ has been read.
 | `--vaadin-version` | newest found | Vaadin version |
 | `--boot-version` | newest found | Spring Boot version |
 | `--java-version` | defaults file | JDK major version the build pins |
+| `--theme` | defaults file | Vaadin theme the project loads: `aura` or `lumo` |
 | `--dir` | the artifact id | where to write the project |
 | `--app-port` | drawn from the range | port the application listens on |
 | `--db-port` | drawn from the range | host port the dev stack's PostgreSQL is published on |
@@ -119,6 +120,7 @@ description = "A Vaadin application"
 java_version = "21"
 vaadin_version = "25.2.6"
 boot_version = "4.1.1"
+theme = "aura"
 
 [ports]
 from = 49000
@@ -148,9 +150,11 @@ file.
 
 4.1 `config.Config` is the only value templates are rendered against:
 `GroupID`, `ArtifactID`, `ProjectName`, `Description`, `Package`, `JavaVersion`,
-`VaadinVersion`, `BootVersion`, `Database`, `Auth`, `E2E`, `Coverage`,
+`VaadinVersion`, `BootVersion`, `Theme`, `Database`, `Auth`, `E2E`, `Coverage`,
 `Traceable`, `OutputDir`, `AppPort`, `DatabasePort`, `AuthPort`, `AuthorName`,
-`AuthorEmail`. The three ports are always set, whether or not the stack piece is
+`AuthorEmail`. `Theme` is `aura` or `lumo` (`config.ThemeAura`, `config.ThemeLumo`)
+and always one of them; it is not an optional piece and `Selected()` does not
+list it. The three ports are always set, whether or not the stack piece is
 generated. The author fields are empty unless git had no identity of its own;
 empty, nothing is written to the repository.
 
@@ -174,6 +178,7 @@ before generating:
 | package | every `.`-separated segment matches `^[a-z_][a-z0-9_]*$` and is not one of the 50 Java keywords (`_` included) |
 | java version | an integer, ≥ 17 |
 | vaadin / boot version | `^\d+\.\d+(\.\d+)?(-[A-Za-z0-9.]+)?$`, non-empty |
+| theme | exactly `aura` or `lumo` |
 | output directory | non-empty |
 | app / database / auth port | each 1024–65535, and the three distinct |
 | author name | when set, non-empty after trimming |
@@ -184,6 +189,8 @@ before generating:
 | Method | Value |
 | --- | --- |
 | `PackagePath()` | the package with `.` replaced by `/` |
+| `Aura()`, `Lumo()` | `Theme == "aura"`, `Theme == "lumo"` |
+| `ThemeName()` | `Aura` or `Lumo`, for the summary and the generated README |
 | `ContainerRequired()` | `Database \|\| Auth` |
 | `ITProfile()` | `it` when `E2E`, otherwise empty |
 | `CommitProperty()` | `build.commit` when `Traceable`, otherwise empty |
@@ -248,7 +255,7 @@ mode.
 | 1 | Coordinates | What this project is called to Maven. | Group ID, Artifact ID |
 | 2 | Identity | What this project is called to people. | Project name, Description, Base package |
 | 3 | Versions | Newest first, from Maven Central. | Vaadin version, Spring Boot version, Java version |
-| 4 | Stack | The core is always generated. These are the rest. | one multi-select of five options |
+| 4 | Stack | The core is always generated. Choose its theme, and the rest. | Theme (a select: Aura, Lumo; described *Aura is the Vaadin 25 default.*), then Features (one multi-select of five options) |
 | — | Author | Git has no identity for the first commit. Kept in this repository only; git config --global sets one everywhere. | Name (inline), Email (inline) — a `span` row above Output, only when `Options.AskAuthor` (§6.2.6) |
 | 5 | Output | Created if it does not exist. Must be empty. | Directory (inline), Generate |
 
@@ -267,8 +274,10 @@ traceable  Traceable builds — every build must carry its commit SHA
 ```
 
 The list is presented with everything already on first, so it opens at the top
-whatever the defaults select. Its height is the number of options; the
-multi-select carries no title on the screen and no description.
+whatever the defaults select. Its height is the number of options plus its
+title row; it is titled `Features` in both forms and carries no description. The
+theme select above it is titled `Theme` in both forms, offers Aura then Lumo, and
+opens on the `Config`'s theme.
 
 6.2.4 The Output section declares `span`: it gets a row of its own the width of
 the terminal, under the columns. Its directory field is inline (question and
@@ -539,7 +548,7 @@ single-child directories collapsed onto one line), `SectionBox`, `Fields`,
 
 8.6 The summary rows are `where` (path relative to the working directory when it
 is under it, absolute otherwise, and the file count), `stack` (the three
-versions), `options` (`Selected()`, or `none — core only`), `ports` (`app <n>`,
+versions, then the theme's name), `options` (`Selected()`, or `none — core only`), `ports` (`app <n>`,
 then `postgres <n>` with the database and `keycloak <n>` with auth), `git` (what
 was done —
 `initialised`, `commit-msg hook wired up`, `author kept in this repository`, `first
@@ -608,8 +617,9 @@ smoke test that builds the binary and runs `--version` and
 
 11.2 `cross-compile` — `make dist`, uploaded as artifacts.
 
-11.3 `generated project` — twice, once with everything off and once with
-everything on: generate with `--yes`, assert the project committed itself and has
+11.3 `generated project` — twice, once with everything off on the Aura default
+and once with everything on and `--theme lumo`, so both themes are compiled by a
+real JDK: generate with `--yes`, assert the project committed itself and has
 a clean working tree, then install Temurin 21 with the Maven cache keyed on the
 generated pom, and build and test it through `./run.sh test`. Surefire reports are
 kept on failure.
@@ -687,7 +697,10 @@ redirect URIs and web origin on the app port, a `user` realm role, and one user
 properties, on the auth port.
 
 12.10 Java sources: `Application` (a `@SpringBootApplication` and
-`AppShellConfigurator` with the Lumo stylesheet and `styles.css`), `MainView` (`@Route("")`, titled with the project
+`AppShellConfigurator` loading `styles.css` after the theme: `Aura.STYLESHEET`
+under Aura, or `Lumo.STYLESHEET` and `Lumo.UTILITY_STYLESHEET` under Lumo —
+nothing else loads the Lumo Utility Classes, and a layout built from
+`LumoUtility` constants without them renders unstyled with no error), `MainView` (`@Route("")`, titled with the project
 name, a text field and a button, a `Grid` of notes when there is a database,
 `@PermitAll` under auth), `MainViewTest` (a browserless `@SpringBootTest` that
 adds a message and refuses an empty one). With the database: `Note` (`@Entity`,
@@ -715,12 +728,16 @@ through.
 
 ## 13. Verification
 
-13.1 `internal/generate` renders all 32 combinations of the five options and
+13.1 `internal/generate` renders all 32 combinations of the five options, under
+each of the two themes, and
 checks each: the pom is well-formed XML, the realm is valid JSON, no file carries
 an unresolved template value, every Java file declares the package its path
 implies, each optional file appears exactly when its option is on, the pom names a
 dependency only when it is used, `run.sh` and the hook are executable, and the
-shared files are byte-identical to their templates, and the three ports appear
+shared files are byte-identical to their templates, `Application` names the
+chosen theme's stylesheets and nothing of the other theme (both Lumo stylesheets
+under Lumo), no generated stylesheet uses a `--lumo-*` or `--aura-*` property,
+and the three ports appear
 wherever the project names a host port with no fixed 8080, 8081 or 5432 left
 beside them. It also covers the git
 behaviour: the project commits itself, that commit satisfies the hook the project

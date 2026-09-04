@@ -12,27 +12,28 @@ $ vaadin-init
 
 ╭─ Coordinates ────────────────────╮ ╭─ Identity ───────────────────────╮ ╭─ Versions ───────────────────────╮ ╭─ Stack ──────────────────────────╮
 │ What this project is called to   │ │ What this project is called to   │ │ Newest first, from Maven         │ │ The core is always generated.    │
-│ Maven.                           │ │ people.                          │ │ Central.                         │ │ These are the rest.              │
-│ ┃ Group ID                       │ │   Project name                   │ │   Vaadin version                 │ │     ✓ Database — PostgreSQL,     │
-│ ┃ Maven group, in reverse-DNS    │ │   The name that appears in the   │ │     25.2.6                       │ │   Flyway, JPA, Testcontainers,   │
-│ ┃ form.                          │ │   UI and in the task runner's    │ │     25.2.5                       │ │   dev compose                    │
-│ ┃ ❯ io.binarycodes               │ │   output.                        │ │     25.2.4                       │ │     ✓ End-to-end tests —         │
-│                                  │ │   ❯ Book Shelf                   │ │     25.2.3                       │ │   Playwright, behind an it       │
-│   Artifact ID                    │ │                                  │ │     25.2.2                       │ │   profile                        │
-│   Maven artifact. Also names     │ │   Description                    │ │     type one myself…             │ │     ✓ Coverage gate — JaCoCo,    │
-│   the directory and the          │ │   ❯ A small library              │ │                                  │ │   80% on service and presenter   │
-│   containers.                    │ │                                  │ │   Spring Boot version            │ │   packages                       │
-│   ❯ book-shelf                   │ │   Base package                   │ │     4.1.1                        │ │     ✓ Traceable builds — every   │
-│                                  │ │   Where the generated Java       │ │     4.1.0                        │ │   build must carry its commit    │
-│                                  │ │   sources live.                  │ │     4.0.8                        │ │   SHA                            │
-│                                  │ │   ❯ io.binarycodes.bookshelf     │ │     4.0.7                        │ │     · Auth — OIDC login against  │
-│                                  │ │                                  │ │     4.0.6                        │ │   Keycloak in the dev stack      │
-│                                  │ │                                  │ │     type one myself…             │ │                                  │
-│                                  │ │                                  │ │                                  │ │                                  │
-│                                  │ │                                  │ │   Java version                   │ │                                  │
-│                                  │ │                                  │ │   Spring Boot 4 needs 17 or      │ │                                  │
-│                                  │ │                                  │ │   newer.                         │ │                                  │
-│                                  │ │                                  │ │   ❯ 21                           │ │                                  │
+│ Maven.                           │ │ people.                          │ │ Central.                         │ │ Choose its theme, and the rest.  │
+│ ┃ Group ID                       │ │   Project name                   │ │   Vaadin version                 │ │   Theme                          │
+│ ┃ ❯ io.binarycodes               │ │   ❯ Book Shelf                   │ │     25.2.6                       │ │   Aura is the Vaadin 25          │
+│                                  │ │                                  │ │     25.2.5                       │ │   default.                       │
+│   Artifact ID                    │ │   Description                    │ │     25.2.4                       │ │     Aura                         │
+│   ❯ book-shelf                   │ │   ❯ A small library              │ │     25.2.3                       │ │     Lumo                         │
+│                                  │ │                                  │ │     25.2.2                       │ │                                  │
+│                                  │ │   Base package                   │ │     type one myself…             │ │   Features                       │
+│                                  │ │   ❯ io.binarycodes.bookshelf     │ │                                  │ │     ✓ Database — PostgreSQL,     │
+│                                  │ │                                  │ │   Spring Boot version            │ │   Flyway, JPA, Testcontainers,   │
+│                                  │ │                                  │ │     4.1.1                        │ │   dev compose                    │
+│                                  │ │                                  │ │     4.1.0                        │ │     ✓ End-to-end tests —         │
+│                                  │ │                                  │ │     4.0.8                        │ │   Playwright, behind an it       │
+│                                  │ │                                  │ │     4.0.7                        │ │   profile                        │
+│                                  │ │                                  │ │     4.0.6                        │ │     ✓ Coverage gate — JaCoCo,    │
+│                                  │ │                                  │ │     type one myself…             │ │   80% on service and presenter   │
+│                                  │ │                                  │ │                                  │ │   packages                       │
+│                                  │ │                                  │ │   Java version                   │ │     ✓ Traceable builds — every   │
+│                                  │ │                                  │ │   Spring Boot 4 needs 17 or      │ │   build must carry its commit    │
+│                                  │ │                                  │ │   newer.                         │ │   SHA                            │
+│                                  │ │                                  │ │   ❯ 21                           │ │     · Auth — OIDC login against  │
+│                                  │ │                                  │ │                                  │ │   Keycloak in the dev stack      │
 ╰──────────────────────────────────╯ ╰──────────────────────────────────╯ ╰──────────────────────────────────╯ ╰──────────────────────────────────╯
 ╭─ Output ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Created if it does not exist. Must be empty.                                                                                                       │
@@ -182,6 +183,9 @@ chosen:
 | `--coverage` | JaCoCo with an 80% gate on the service and presenter packages |
 | `--traceable` | Every build must carry the commit SHA it was built from |
 
+The theme is a choice too, not an option: `--theme aura` (the default, and Vaadin
+25's) or `--theme lumo`, which also loads the Lumo Utility Classes.
+
 The generated project's own README explains each opinion and how to back out of
 it. That file is the answer to "why is it like this?", and it ships in the project
 rather than living here, because that is where the question gets asked.
@@ -258,7 +262,8 @@ frontend build and browser download that `verify` adds.
 make check     # gofmt, go vet, go test
 ```
 
-`internal/generate`'s tests render all 32 combinations of the five options and
+`internal/generate`'s tests render all 32 combinations of the five options,
+under each of the two themes, and
 check each one: the pom is well-formed XML, the realm is valid JSON, no file
 carries an unresolved template value, every Java file declares the package its
 path implies, and each optional file appears exactly when its option is on.

@@ -96,13 +96,28 @@ import com.vaadin.flow.theme.aura.Aura;
 import com.vaadin.flow.theme.lumo.Lumo;
 {{- end}}
 ...
-@StyleSheet({{if .Aura}}Aura.STYLESHEET{{else}}Lumo.STYLESHEET{{end}})
+{{- if .Aura}}
+@StyleSheet(Aura.STYLESHEET)
+{{- else}}
+@StyleSheet(Lumo.STYLESHEET)
+@StyleSheet(Lumo.UTILITY_STYLESHEET)
+{{- end}}
 @StyleSheet("styles.css")
 ```
 
+A Lumo project loads the Lumo Utility Classes too. In Vaadin 25 they are no
+longer loaded through `theme.json`; the only way in is
+`@StyleSheet(Lumo.UTILITY_STYLESHEET)`, and the symptom of not having it is a
+layout built from `LumoUtility` constants rendering with no styles at all and no
+error anywhere. Anyone who picks Lumo over the Vaadin 25 default is almost
+certainly matching an existing Lumo codebase, and those codebases use the
+utility classes, so the annotation belongs in the template rather than in a
+README note the user finds after the layout has already broken. Aura has no
+counterpart, so nothing is added on that side.
+
 The class comment there still says `@Theme` "is deprecated in Vaadin 25"; while
-editing it, make it say which theme is loaded and that the other is one flag
-away.
+editing it, make it say which theme is loaded, that the other is one flag away,
+and why the Lumo branch carries two stylesheets.
 
 `templates/styles/main-view.css` is currently copied verbatim
 (`internal/generate/generate.go`, the `styles/main-view.css` entry). Two ways out,
@@ -124,9 +139,11 @@ grows past one view.
 **Generated README** — `templates/README.md.tmpl`
 
 A short section saying which theme this project loads, where the constant lives,
-and the two-line edit that swaps it — the file is the answer to "why is it like
-this?", and "why does my `--lumo-*` property do nothing?" is exactly the question
-an Aura project will produce.
+and the edit that swaps it — the file is the answer to "why is it like this?",
+and "why does my `--lumo-*` property do nothing?" is exactly the question an Aura
+project will produce. For a Lumo project the section also names the utility
+stylesheet, so a reader swapping to Aura knows to drop it along with the theme
+and that `LumoUtility` constants stop working when they do.
 
 **Summary** — `main.go`, `printResult`
 
@@ -136,12 +153,10 @@ five-row box for a four-fact result reads as padding.
 
 ## Also worth deciding while here
 
-- **Lumo Utility Classes.** They are no longer loaded by `theme.json` in Vaadin 25
-  and need `@StyleSheet(Lumo.UTILITY_STYLESHEET)`. They have no Aura counterpart.
-  Leaving them out is the right default — nothing generated uses them — but the
-  generated README's theme section should say the annotation exists, because the
-  symptom of not knowing is a layout built from `LumoUtility` constants rendering
-  with no styles at all and no error anywhere.
+- **Lumo Utility Classes.** Decided above: loaded whenever Lumo is chosen, never
+  under Aura. Nothing generated uses them yet, so the cost is one extra stylesheet
+  request on a Lumo project; the alternative is a failure mode with no error
+  message.
 - **Color scheme.** Aura ships light and dark schemes and an `@ColorScheme`
   annotation. That is a separate question and has its own file:
   `03-color-scheme-light-dark.md`.
@@ -153,7 +168,8 @@ five-row box for a four-fact result reads as padding.
   matrix with the two themes rather than adding a third dimension of booleans —
   64 renders, still milliseconds.
 - A direct assertion in the same package: an Aura config's `Application.java`
-  names `Aura.STYLESHEET` and no `Lumo`, and vice versa. The existing
+  names `Aura.STYLESHEET` and no `Lumo`; a Lumo config's names both
+  `Lumo.STYLESHEET` and `Lumo.UTILITY_STYLESHEET` and no `Aura`. The existing
   `TestPomNamesADependencyOnlyWhenItIsUsed` is the shape to copy.
 - `internal/config`: `ValidTheme` accepts both values and rejects anything else;
   the embedded defaults produce `aura`.
