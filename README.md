@@ -4,47 +4,7 @@ Bootstraps an opinionated Vaadin and Spring Boot project. One binary, no
 toolchain to install first, and a full-screen TUI that asks about eight things on
 one page and then writes a project that builds.
 
-```
-$ vaadin-init
-
-┃ vaadin-init v0.2.0
-┃ An opinionated Vaadin 25 and Spring Boot 4 project.
-
-╭─ Coordinates ────────────────────╮ ╭─ Identity ───────────────────────╮ ╭─ Versions ───────────────────────╮ ╭─ Stack ──────────────────────────╮
-│ What this project is called to   │ │ What this project is called to   │ │ Newest first, from Maven         │ │ The core is always generated.    │
-│ Maven.                           │ │ people.                          │ │ Central.                         │ │ Choose its theme, and the rest.  │
-│ ┃ Group ID                       │ │   Project name                   │ │   Vaadin version                 │ │   Theme                          │
-│ ┃ ❯ io.binarycodes               │ │   ❯ Book Shelf                   │ │   ❯ 25.2.6                       │ │   Aura is the Vaadin 25          │
-│                                  │ │                                  │ │     25.2.5                       │ │   default.                       │
-│   Artifact ID                    │ │   Description                    │ │     25.2.4                       │ │   ❯ Aura                         │
-│   ❯ book-shelf                   │ │   ❯ A small library              │ │     25.2.3                       │ │     Lumo                         │
-│                                  │ │                                  │ │     25.2.2                       │ │                                  │
-│                                  │ │   Base package                   │ │     type one myself…             │ │   Features                       │
-│                                  │ │   ❯ io.binarycodes.bookshelf     │ │                                  │ │     ✓ Database — PostgreSQL,     │
-│                                  │ │                                  │ │   Spring Boot version            │ │   Flyway, JPA, Testcontainers,   │
-│                                  │ │                                  │ │   ❯ 4.1.1                        │ │   dev compose                    │
-│                                  │ │                                  │ │     4.1.0                        │ │     ✓ End-to-end tests —         │
-│                                  │ │                                  │ │     4.0.8                        │ │   Playwright, behind an it       │
-│                                  │ │                                  │ │     4.0.7                        │ │   profile                        │
-│                                  │ │                                  │ │     4.0.6                        │ │     ✓ Coverage gate — JaCoCo,    │
-│                                  │ │                                  │ │     type one myself…             │ │   80% on service and presenter   │
-│                                  │ │                                  │ │                                  │ │   packages                       │
-│                                  │ │                                  │ │   Java version                   │ │     ✓ Traceable builds — every   │
-│                                  │ │                                  │ │   Spring Boot 4 needs 17 or      │ │   build must carry its commit    │
-│                                  │ │                                  │ │   newer.                         │ │   SHA                            │
-│                                  │ │                                  │ │   ❯ 21                           │ │     · Auth — OIDC login against  │
-│                                  │ │                                  │ │                                  │ │   Keycloak in the dev stack      │
-╰──────────────────────────────────╯ ╰──────────────────────────────────╯ ╰──────────────────────────────────╯ ╰──────────────────────────────────╯
-╭─ Output ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Created if it does not exist. Must be empty.                                                                                                       │
-│   Directory ❯ book-shelf                                                                                                                           │
-│                                                                                                                                                    │
-│     Generate                                                                                                                                       │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-enter next · alt+1 coordinates · alt+2 identity · alt+3 versions · alt+4 stack · alt+5 output
-```
+![vaadin-init: the questions answered on one screen, then the project written and reported on the same screen](demo/demo.gif)
 
 One screen, not a queue of questions: the whole of what is about to be generated
 is in front of you before you agree to it. `alt+1` … `alt+5` jump straight to a
