@@ -538,7 +538,10 @@ type), `Success` (what happened), `Danger` (only ever a failure), `Muted`
 8.4 The theme is built on `huh.ThemeBase`, which sets the structural styles and
 leaves the colours unset. The active field wears a thick accent left bar, the same
 mark as the banner. Blurred styles are copied from focused first, so a style added
-to one is inherited rather than silently missing from the other.
+to one is inherited rather than silently missing from the other. A blurred select
+keeps a faint caret on its chosen option — the only mark of the answer once the
+cursor has moved on — while a blurred multi-select drops its cursor, its options
+carrying their own ✓ and ·.
 
 8.5 Renderers: `Banner`, `Summary` (a rounded box, labels aligned, values wrapped
 to 72 columns with a hanging indent), `NextSteps`, `FileTree` (a tree, chains of

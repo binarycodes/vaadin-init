@@ -435,6 +435,33 @@ func TestOutputRunsUnderTheColumns(t *testing.T) {
 	}
 }
 
+// A choice made in a select is still visible after the cursor has moved on.
+//
+// A select's options are plain text, so the caret is the only mark of which one
+// was chosen; a theme drawn without it looks unanswered the moment the next
+// question is reached, and the answer it holds cannot be checked before generating.
+func TestAChosenOptionKeepsItsCaretWhenLeft(t *testing.T) {
+	s := screenAt(t, wide, tall)
+
+	press(s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}, Alt: true})
+	press(s, tea.KeyMsg{Type: tea.KeyDown})
+	if s.c.Theme != "lumo" {
+		t.Fatalf("theme = %q after moving down, want lumo", s.c.Theme)
+	}
+	next(s) // on to the features
+
+	on := view(s)
+	if !strings.Contains(on, "❯ Lumo") {
+		t.Error("the chosen theme has no caret once the select is left")
+	}
+	if strings.Contains(on, "❯ Aura") {
+		t.Error("the theme that was not chosen has a caret")
+	}
+	if !strings.Contains(on, focusBar+" Features") {
+		t.Error("the cursor did not move on to the features")
+	}
+}
+
 // One button, not two: there is no No to answer.
 //
 // Every other way out of this screen is ctrl+c or never having run it, and a No

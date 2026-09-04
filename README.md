@@ -14,15 +14,15 @@ $ vaadin-init
 │ What this project is called to   │ │ What this project is called to   │ │ Newest first, from Maven         │ │ The core is always generated.    │
 │ Maven.                           │ │ people.                          │ │ Central.                         │ │ Choose its theme, and the rest.  │
 │ ┃ Group ID                       │ │   Project name                   │ │   Vaadin version                 │ │   Theme                          │
-│ ┃ ❯ io.binarycodes               │ │   ❯ Book Shelf                   │ │     25.2.6                       │ │   Aura is the Vaadin 25          │
+│ ┃ ❯ io.binarycodes               │ │   ❯ Book Shelf                   │ │   ❯ 25.2.6                       │ │   Aura is the Vaadin 25          │
 │                                  │ │                                  │ │     25.2.5                       │ │   default.                       │
-│   Artifact ID                    │ │   Description                    │ │     25.2.4                       │ │     Aura                         │
+│   Artifact ID                    │ │   Description                    │ │     25.2.4                       │ │   ❯ Aura                         │
 │   ❯ book-shelf                   │ │   ❯ A small library              │ │     25.2.3                       │ │     Lumo                         │
 │                                  │ │                                  │ │     25.2.2                       │ │                                  │
 │                                  │ │   Base package                   │ │     type one myself…             │ │   Features                       │
 │                                  │ │   ❯ io.binarycodes.bookshelf     │ │                                  │ │     ✓ Database — PostgreSQL,     │
 │                                  │ │                                  │ │   Spring Boot version            │ │   Flyway, JPA, Testcontainers,   │
-│                                  │ │                                  │ │     4.1.1                        │ │   dev compose                    │
+│                                  │ │                                  │ │   ❯ 4.1.1                        │ │   dev compose                    │
 │                                  │ │                                  │ │     4.1.0                        │ │     ✓ End-to-end tests —         │
 │                                  │ │                                  │ │     4.0.8                        │ │   Playwright, behind an it       │
 │                                  │ │                                  │ │     4.0.7                        │ │   profile                        │

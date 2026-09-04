@@ -140,7 +140,11 @@ func Theme() *huh.Theme {
 	t.Blurred.TextInput.Prompt = lipgloss.NewStyle().Foreground(Faint)
 	t.Blurred.TextInput.Text = lipgloss.NewStyle().Foreground(Muted)
 	t.Blurred.MultiSelectSelector = lipgloss.NewStyle().SetString("  ")
-	t.Blurred.SelectSelector = lipgloss.NewStyle().SetString("  ")
+	// A select keeps its caret when it is left, faint, on the option chosen. It
+	// is the only mark of the answer: the multi-select's options carry their
+	// own ✓, but a select's are plain text, and without the caret a theme or a
+	// version that was chosen looks exactly like the one that was not.
+	t.Blurred.SelectSelector = lipgloss.NewStyle().Foreground(Faint).SetString(Caret)
 	t.Blurred.NextIndicator = lipgloss.NewStyle()
 	t.Blurred.PrevIndicator = lipgloss.NewStyle()
 
