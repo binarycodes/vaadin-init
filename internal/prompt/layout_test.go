@@ -232,6 +232,34 @@ func TestATypedAnswerIsNotOverwritten(t *testing.T) {
 	}
 }
 
+// A derived answer is reached with its cursor after the text, however the
+// coordinates were typed.
+//
+// Typed one key at a time — which is how anyone types — the derived project name
+// is replaced letter by letter, and the text input keeps its cursor where it was
+// on each replacement: after the first letter. Arriving there, ctrl+u then
+// deletes one letter and the new name is typed into the middle of the old one.
+func TestADerivedAnswerIsReachedWithTheCursorAtItsEnd(t *testing.T) {
+	s := screenAt(t, wide, tall)
+
+	next(s) // on to the artifact id
+	press(s, tea.KeyMsg{Type: tea.KeyCtrlU})
+	typeIn(s, "book-shelf")
+	if s.c.ProjectName != "Book Shelf" {
+		t.Fatalf("project name = %q, want it derived", s.c.ProjectName)
+	}
+
+	press(s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}, Alt: true})
+	press(s, tea.KeyMsg{Type: tea.KeyCtrlU})
+	if s.c.ProjectName != "" {
+		t.Errorf("project name = %q after ctrl+u, want it cleared", s.c.ProjectName)
+	}
+	typeIn(s, "The Book Shelf")
+	if s.c.ProjectName != "The Book Shelf" {
+		t.Errorf("project name = %q, want exactly what was typed", s.c.ProjectName)
+	}
+}
+
 // The version lists arrive after the screen is up, and the newest release is the
 // answer they arrive on.
 func TestTheVersionListsOpenOnTheNewestRelease(t *testing.T) {

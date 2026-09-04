@@ -356,7 +356,11 @@ typed, since both are on screen at the same time.
 for it. Once the user has typed their own, it is never taken back.
 
 6.5.3 Replacing the text means re-binding the field's value: huh reads a bound
-value when the field is built and not again.
+value when the field is built and not again. The value is bound through an empty
+string first, which is the one case the text input moves its cursor to the end for;
+otherwise a name derived letter by letter is reached with the cursor after its
+first letter, where `ctrl+u` deletes one letter and typing lands inside the old
+answer.
 
 ### 6.6 Versions arriving
 

@@ -357,11 +357,22 @@ func (s *screen) follow() {
 // Re-binding the value is how the text on screen is replaced: huh reads the
 // bound value when the field is built and not again, so setting the Config
 // alone would change what is generated without changing what is being read.
+//
+// Bound twice, through an empty string first, to put the cursor after the text.
+// The text input keeps its cursor where it was when its value is replaced, unless
+// the value was empty; and it was empty once, when the artifact id was cleared,
+// so the cursor lands after the first letter derived and stays there while the
+// rest is typed. A field reached with its cursor in the second column is one
+// where ctrl+u deletes one letter and typing lands in the middle of the old
+// answer. huh offers no way to move the cursor, but an empty value is the case
+// it moves it for.
 func (s *screen) track(field *huh.Input, bound, derived *string, next string) {
 	if *bound != *derived || next == *derived {
 		return
 	}
 	*bound, *derived = next, next
+	empty := ""
+	field.Value(&empty)
 	field.Value(bound)
 }
 
