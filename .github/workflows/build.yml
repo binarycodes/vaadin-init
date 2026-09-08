@@ -95,11 +95,19 @@ jobs:
           if-no-files-found: error
 
   generated-project:
-    name: generated project (${{ matrix.name }})
+    name: generated project (${{ matrix.name }}, Vaadin ${{ matrix.line }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        # One leg per option set per supported Vaadin line: the templates are
+        # kept per line, and this is the only place each line's pom meets Maven.
+        # The line is given as a line, not a release — `--vaadin-version 25` is
+        # the newest 25.x on Maven Central — so no release number is pinned here
+        # to go stale. The JDK is the one the line's floor pins, so the oldest
+        # JDK a line claims to run on is the one that compiles it.
+        name: [core, full]
+        line: ['25']
         include:
           # The lean end: no container runtime needed, and nothing optional to
           # hide a fault in the core templates.
@@ -112,6 +120,8 @@ jobs:
           # is left on the Aura default.
           - name: full
             flags: --database --auth --e2e --coverage --traceable --theme lumo
+          - line: '25'
+            java: '21'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -132,7 +142,7 @@ jobs:
           git config --global user.email "ci@example.com"
 
       - name: generate a project
-        run: ./vaadin-init --yes --group-id io.binarycodes --artifact-id ci-app --dir generated ${{ matrix.flags }}
+        run: ./vaadin-init --yes --group-id io.binarycodes --artifact-id ci-app --dir generated --vaadin-version ${{ matrix.line }} ${{ matrix.flags }}
 
       # The commit is what makes the next step possible at all when traceable
       # builds are on: the build refuses to run without a SHA to stamp. Asserted
@@ -158,7 +168,7 @@ jobs:
       - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6.0.0
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ matrix.java }}
           cache: maven
           cache-dependency-path: generated/pom.xml
 
