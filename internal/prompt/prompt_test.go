@@ -242,7 +242,7 @@ func TestStackSelectionIsAppliedBothWays(t *testing.T) {
 // reaches the Config, and a blank line keeps the default.
 func TestTheThemeIsAskedAndReachesTheConfig(t *testing.T) {
 	position := func(theme string) string {
-		for i, option := range themeOptions {
+		for i, option := range themeOptions(rules, "25.2.6", config.ThemeAura) {
 			if option.Value == theme {
 				return strconv.Itoa(i + 1)
 			}
@@ -269,73 +269,6 @@ func TestTheThemeIsAskedAndReachesTheConfig(t *testing.T) {
 	}
 	if got.Theme != config.ThemeAura {
 		t.Errorf("theme = %q, want the seeded default kept", got.Theme)
-	}
-}
-
-// Choosing "type one myself" leaves a sentinel in the version field, and the
-// version typed in the group that follows has to replace it.
-//
-// The sentinel must never survive into a Config: it is not a version, and a
-// pom.xml carrying it would name a dependency that does not exist.
-func TestTypedVersionsResolveTheSentinel(t *testing.T) {
-	cases := []struct {
-		name               string
-		vaadin, boot, java string
-		typed              typedVersions
-		wantVaadin         string
-		wantBoot           string
-		wantJava           string
-	}{
-		{
-			name:   "a typed version replaces the sentinel",
-			vaadin: custom, boot: custom, java: custom,
-			typed:      typedVersions{vaadin: "25.3.0-beta1", boot: "4.2.0-RC1", java: "27"},
-			wantVaadin: "25.3.0-beta1", wantBoot: "4.2.0-RC1", wantJava: "27",
-		},
-		{
-			name:   "a chosen version is left alone",
-			vaadin: "25.2.6", boot: "4.1.1", java: "21",
-			typed:      typedVersions{vaadin: "ignored", boot: "ignored", java: "ignored"},
-			wantVaadin: "25.2.6", wantBoot: "4.1.1", wantJava: "21",
-		},
-		{
-			name:   "a sentinel with nothing typed falls back",
-			vaadin: custom, boot: custom, java: custom,
-			typed:      typedVersions{},
-			wantVaadin: "25.2.6", wantBoot: "4.1.1", wantJava: "21",
-		},
-		{
-			name:   "only the field left on the sentinel is replaced",
-			vaadin: custom, boot: "4.1.0", java: "25",
-			typed:      typedVersions{vaadin: "25.9.9"},
-			wantVaadin: "25.9.9", wantBoot: "4.1.0", wantJava: "25",
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			cfg := config.Config{VaadinVersion: c.vaadin, BootVersion: c.boot, JavaVersion: c.java}
-			c.typed.resolve(&cfg, "25.2.6", "4.1.1", "21")
-
-			if cfg.VaadinVersion != c.wantVaadin {
-				t.Errorf("Vaadin version = %q, want %q", cfg.VaadinVersion, c.wantVaadin)
-			}
-			if cfg.BootVersion != c.wantBoot {
-				t.Errorf("Boot version = %q, want %q", cfg.BootVersion, c.wantBoot)
-			}
-			if cfg.JavaVersion != c.wantJava {
-				t.Errorf("Java version = %q, want %q", cfg.JavaVersion, c.wantJava)
-			}
-			if err := config.ValidVersion(cfg.VaadinVersion); err != nil {
-				t.Errorf("resolved Vaadin version is not a version: %v", err)
-			}
-			if err := config.ValidVersion(cfg.BootVersion); err != nil {
-				t.Errorf("resolved Boot version is not a version: %v", err)
-			}
-			if err := config.ValidJavaVersion(cfg.JavaVersion); err != nil {
-				t.Errorf("resolved Java version is not a version: %v", err)
-			}
-		})
 	}
 }
 
@@ -370,7 +303,7 @@ func TestBootChoices(t *testing.T) {
 
 func TestJavaChoices(t *testing.T) {
 	// The LTS releases in the range and the newest in it: what the range comes
-	// to for anyone starting a project, with the rest one escape hatch away.
+	// to for anyone starting a project; --java-version names the rest.
 	list, open, note := javaChoices(rules, "25.2.6", "4.1.0", "21")
 	if want := "21 25 26"; strings.Join(list, " ") != want {
 		t.Errorf("list = %v, want %s", list, want)
@@ -399,16 +332,6 @@ func TestJavaChoices(t *testing.T) {
 	list, _, note = javaChoices(rules, "25.2.6", "4.0.8", "21")
 	if list != nil || !strings.Contains(note, "needs Spring Boot 4.1.0 or newer") || strings.Contains(note, "\n") {
 		t.Errorf("an incompatible pair: list %v, note %q", list, note)
-	}
-}
-
-// The sentinel must not be mistakable for an answer.
-func TestSentinelIsNotAValidVersion(t *testing.T) {
-	if err := config.ValidVersion(custom); err == nil {
-		t.Error("the sentinel should never pass version validation")
-	}
-	if custom == "" {
-		t.Error("an empty sentinel collides with the zero value of the field it sits beside")
 	}
 }
 
@@ -450,12 +373,12 @@ func TestTheCommandBarTakesNoAnswer(t *testing.T) {
 // git has no identity to commit with.
 func runAsking(t *testing.T, c config.Config, answers string) (config.Config, error) {
 	t.Helper()
-	session, err := Run(c, lookedUp(), Options{
-		Accessible: true,
-		AskAuthor:  true,
-		Input:      strings.NewReader(answers),
-		Output:     io.Discard,
-	})
+	options := conversation()
+	options.Accessible = true
+	options.AskAuthor = true
+	options.Input = strings.NewReader(answers)
+	options.Output = io.Discard
+	session, err := Run(c, lookedUp(), options)
 	return session.Config, err
 }
 

@@ -9,6 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
+	"github.com/binarycodes/vaadin-init/internal/compat"
+	"github.com/binarycodes/vaadin-init/internal/config"
 	"github.com/binarycodes/vaadin-init/internal/ui"
 	"github.com/binarycodes/vaadin-init/internal/versions"
 )
@@ -441,31 +443,69 @@ func TestTheJavaListHoldsTheRange(t *testing.T) {
 	}
 }
 
-// Every list has a way to type an answer it did not offer, and the Java one is
-// checked against the pair at the field.
-func TestATypedJavaIsCheckedAgainstThePair(t *testing.T) {
-	s := screenAt(t, wide, tall)
-	s.c.JavaVersion = custom
+// The theme list follows the Vaadin answer: a line that ships one theme offers
+// one, and the cursor moves off a theme the new line does not have.
+//
+// With rules of this test's own, since the shipped file supports one line and
+// that line ships both themes: here 24 is supported too, on Lumo alone.
+func TestTheThemeListFollowsTheVaadinAnswer(t *testing.T) {
+	twoLines, err := compat.Parse([]byte(`{
+	  "vaadin": [
+	    {"line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "4.0.0", "themes": ["aura", "lumo"], "source": ""},
+	    {"line": "24", "supported": true, "java_min": 17, "boot_line": "3", "boot_min": "3.5.0", "themes": ["lumo"], "source": ""}
+	  ],
+	  "boot": [
+	    {"line": "4.1", "java_min": 17, "java_max": 26, "eol": "", "source": ""},
+	    {"line": "3.5", "java_min": 17, "java_max": 25, "eol": "", "source": ""}
+	  ],
+	  "java": {"lts": [17, 21, 25]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := seed()
+	options := screenOptions()
+	options.Rules = twoLines
+	s := newScreen(&c, lookedUp(), options)
+	s.Init()
+	_, cmd := s.Update(versionsMsg(versions.Available{Vaadin: []string{"25.2.6", "24.10.9"}, Boot: []string{"4.1.1", "3.5.15"}}))
+	deliver(s, cmd)
 	s.Update(tea.WindowSizeMsg{Width: wide, Height: tall})
 
-	if got := len(s.tiled.shown()); got != 6 {
-		t.Fatalf("%d sections after choosing to type a Java version, want 6", got)
+	if s.c.Theme != config.ThemeAura || !strings.Contains(view(s), "Lumo") {
+		t.Fatalf("Vaadin 25 should offer both themes and open on Aura: theme %q", s.c.Theme)
 	}
-	validate := javaValidator(rules, s.c, &s.typed)
-	if err := validate("17"); err == nil {
-		t.Error("Java 17 should be refused for Vaadin 25")
+
+	s.c.VaadinVersion = "24.10.9"
+	deliver(s, s.derive())
+	if s.c.Theme != config.ThemeLumo {
+		t.Errorf("theme = %q, want the one theme Vaadin 24 ships", s.c.Theme)
 	}
-	if err := validate("27"); err == nil {
-		t.Error("Java 27 should be refused for Spring Boot 4.1")
+	if on := view(s); strings.Contains(on, "Aura") || !strings.Contains(on, "Lumo is the Vaadin 24 default.") {
+		t.Error("Aura is offered, or the line's own default not named, for a Vaadin that does not ship it")
 	}
-	if err := validate("26"); err != nil {
-		t.Errorf("Java 26 should be accepted: %v", err)
+	if s.c.BootVersion != "3.5.15" || s.c.JavaVersion != "21" {
+		t.Errorf("Boot %q and Java %q should have followed too", s.c.BootVersion, s.c.JavaVersion)
 	}
-	s.typed.java = "26"
-	c := *s.c
-	s.typed.resolve(&c, s.newestVaadin, s.newestBoot, s.newestJava)
-	if c.JavaVersion != "26" {
-		t.Errorf("Java version = %q, want the typed one", c.JavaVersion)
+
+	s.c.VaadinVersion = "25.2.6"
+	deliver(s, s.derive())
+	if s.c.Theme != config.ThemeAura {
+		t.Errorf("theme = %q, want the default back once the line ships it again", s.c.Theme)
+	}
+}
+
+// A version list offers what the lookup found and nothing else: no way to type a
+// release into the screen, which is what --vaadin-version and its siblings are
+// for. A version outside the list is a version the rules have not seen, and a
+// typed one landed in a pom.xml is the failure the lookup exists to prevent.
+func TestTheVersionListsOfferNoTyping(t *testing.T) {
+	s := screenAt(t, wide, tall)
+	if on := view(s); strings.Contains(on, "type one myself") {
+		t.Error("a version list offers to take a typed version")
+	}
+	if got := len(s.tiled.shown()); got != 5 {
+		t.Errorf("%d sections, want the five with no hidden ones", got)
 	}
 }
 
@@ -549,33 +589,6 @@ func TestAgreeingEndsTheScreen(t *testing.T) {
 	}
 	if s.View() != "" {
 		t.Error("the screen should draw nothing once it is finished, so the terminal comes back clean")
-	}
-}
-
-// The escape hatch is a section like any other, and only there when it is asked
-// for: choosing "type one myself" adds a column, and answering it takes the
-// column away again.
-func TestTypingAVersionAddsASection(t *testing.T) {
-	s := screenAt(t, wide, tall)
-
-	if got := len(s.tiled.shown()); got != 5 {
-		t.Fatalf("%d sections before a version is typed, want 5", got)
-	}
-
-	s.c.VaadinVersion = custom
-	s.Update(tea.WindowSizeMsg{Width: wide, Height: tall})
-
-	if got := len(s.tiled.shown()); got != 6 {
-		t.Errorf("%d sections after choosing to type a version, want 6", got)
-	}
-	// Counted rather than matched on its prose, which wraps differently in a
-	// column than it does in a line: the question appears twice now, once as the
-	// list it was not on and once as the box to type it into.
-	if got := strings.Count(view(s), "Vaadin version"); got < 2 {
-		t.Error("the typed-version question is not on the screen")
-	}
-	if hints := ansi.ReplaceAllString(s.bar(), ""); !strings.Contains(hints, "alt+6") {
-		t.Errorf("the new section has no key of its own: %q", hints)
 	}
 }
 

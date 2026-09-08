@@ -1,5 +1,5 @@
-// Package compat holds the rules for which Spring Boot and which JDK go with a
-// Vaadin release, read from compat.json.
+// Package compat holds the rules for which Spring Boot, which JDK and which
+// themes go with a Vaadin release, read from compat.json.
 //
 // The rules exist only as prose in release notes and documentation pages —
 // nobody publishes them as data — so this repository writes them down in a file a
@@ -38,13 +38,14 @@ type Rules struct {
 // VaadinRule is one Vaadin line: what it needs, and whether this tool has
 // templates for it.
 type VaadinRule struct {
-	Line      string  `json:"line"`
-	Supported bool    `json:"supported"`
-	JavaMin   int     `json:"java_min"`
-	BootLine  string  `json:"boot_line"`
-	BootMin   string  `json:"boot_min"`
-	Since     []Since `json:"since,omitempty"`
-	Source    string  `json:"source"`
+	Line      string   `json:"line"`
+	Supported bool     `json:"supported"`
+	JavaMin   int      `json:"java_min"`
+	BootLine  string   `json:"boot_line"`
+	BootMin   string   `json:"boot_min"`
+	Since     []Since  `json:"since,omitempty"`
+	Themes    []string `json:"themes"`
+	Source    string   `json:"source"`
 }
 
 // Since tightens a line's Boot minimum from one Vaadin release onwards.
@@ -192,6 +193,9 @@ func (r Rules) validate() error {
 			if err := validVersionIn(since.BootMin, rule.BootLine); err != nil {
 				return fmt.Errorf("%s: since %s: boot_min: %w", where, since.Vaadin, err)
 			}
+		}
+		if len(rule.Themes) == 0 || slices.Contains(rule.Themes, "") {
+			return fmt.Errorf("%s: themes must name at least one theme", where)
 		}
 	}
 	for _, rule := range r.BootRules {
@@ -448,7 +452,7 @@ func (r Rules) CheckJava(vaadin, boot string, java int) error {
 
 // Check is every cross-field rule at once, for a whole Config. Each message
 // names the field it is about, the rule, and where the rule came from.
-func (r Rules) Check(vaadin, boot string, java int) error {
+func (r Rules) Check(vaadin, boot string, java int, theme string) error {
 	if _, err := r.Vaadin(vaadin); err != nil {
 		return fmt.Errorf("vaadin version: %w", err)
 	}
@@ -458,7 +462,47 @@ func (r Rules) Check(vaadin, boot string, java int) error {
 	if err := r.CheckJava(vaadin, boot, java); err != nil {
 		return fmt.Errorf("java version: %w", err)
 	}
+	if err := r.CheckTheme(vaadin, theme); err != nil {
+		return fmt.Errorf("theme: %w", err)
+	}
 	return nil
+}
+
+// Themes lists the themes a Vaadin version's line ships, the default first, or
+// nothing for a line this tool does not generate.
+func (r Rules) Themes(vaadin string) []string {
+	rule, err := r.Vaadin(vaadin)
+	if err != nil {
+		return nil
+	}
+	return rule.Themes
+}
+
+// CheckTheme says why a theme does not go with a Vaadin version, or nothing when
+// it does. Bare, for the field that asks for the theme.
+func (r Rules) CheckTheme(vaadin, theme string) error {
+	rule, err := r.Vaadin(vaadin)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(rule.Themes, theme) {
+		return fmt.Errorf("Vaadin %s ships %s, not %s%s", rule.Line, strings.Join(rule.Themes, " and "), theme, cite(rule.Source))
+	}
+	return nil
+}
+
+// ThemeDefault is the theme to open on for a Vaadin version: the preferred one
+// when the line ships it, otherwise the line's own default. Empty for a line this
+// tool does not generate.
+func (r Rules) ThemeDefault(vaadin, preferred string) string {
+	themes := r.Themes(vaadin)
+	if len(themes) == 0 {
+		return ""
+	}
+	if slices.Contains(themes, preferred) {
+		return preferred
+	}
+	return themes[0]
 }
 
 // BootDefault is the Boot to offer for a Vaadin version: the release it was

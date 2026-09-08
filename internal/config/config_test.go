@@ -112,6 +112,12 @@ func TestValidateChecksTheVersionsTogether(t *testing.T) {
 		{"a Vaadin line this tool does not generate", "24.10.9", "3.5.15", "17", false, "vaadin version", "this tool generates Vaadin 25 projects"},
 		{"the wrong line on a right-looking Boot", "24.10.9", "4.1.0", "21", false, "vaadin version", ""},
 	}
+	// And the theme against the Vaadin line, once the versions agree.
+	cfg := base()
+	cfg.Theme = "material"
+	if err := cfg.Validate(rules(t)); err == nil || !strings.HasPrefix(err.Error(), "theme:") {
+		t.Errorf("a theme the line does not ship should be refused as theme: %v", err)
+	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := base()

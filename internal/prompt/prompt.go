@@ -8,7 +8,6 @@ package prompt
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -58,16 +57,6 @@ func offer(list []string) []string {
 	return list
 }
 
-// custom is the sentinel a version select uses for "let me type one".
-//
-// Deliberately not the empty string. huh matches the bound value against the
-// options to decide where to put the cursor, so a sentinel equal to a string's
-// zero value is the option it lands on whenever that value is not yet set — which
-// opens the list at "type one myself" with every version scrolled out of sight
-// above it. It is also not a shape ValidVersion accepts, so it cannot survive to
-// a pom.xml even if the resolving below were ever skipped.
-const custom = "\x00type-one-myself"
-
 // Outcome is what there is to say once a project has been written: the same
 // summary the tool leaves in the scrollback, ready to be shown inside the screen
 // that asked for it.
@@ -105,8 +94,9 @@ type Options struct {
 	AskAuthor bool
 
 	// Rules say which Spring Boot and which JDK go with the chosen Vaadin: what
-	// the Boot list is filtered to, what the Java list holds, and what a typed
-	// version is checked against. The rules come from a file, not from here.
+	// the Boot list is filtered to, what the Java list holds, and what an answer
+	// typed in accessible mode is checked against. The rules come from a file,
+	// not from here.
 	Rules compat.Rules
 
 	// Pinned is where the Boot list opens: the release the chosen Vaadin was
@@ -238,47 +228,6 @@ func (r *lineReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// typedVersions holds a version the user typed because the list did not offer
-// it. Kept apart from the Config until the form is done, so that "the select was
-// left on the sentinel" and "here is the version" stay two separate facts.
-type typedVersions struct {
-	vaadin string
-	boot   string
-	java   string
-}
-
-// resolve replaces a sentinel left by a select with the version typed in the
-// group that followed it.
-//
-// A sentinel that somehow reaches here with nothing typed is dropped back to the
-// fallback rather than carried forward: it is not a version, and Validate would
-// reject it in a message about a value the user never entered.
-func (t typedVersions) resolve(c *config.Config, vaadinFallback, bootFallback, javaFallback string) {
-	if c.VaadinVersion == custom {
-		c.VaadinVersion = cmp.Or(t.vaadin, vaadinFallback)
-	}
-	if c.BootVersion == custom {
-		c.BootVersion = cmp.Or(t.boot, bootFallback)
-	}
-	if c.JavaVersion == custom {
-		c.JavaVersion = cmp.Or(t.java, javaFallback)
-	}
-}
-
-// pair is the Vaadin and Boot as answered so far — typed where the select was
-// left on the sentinel — or not ok while either is a sentinel with nothing typed
-// yet, which is when a rule about the pair has nothing to say.
-func (t typedVersions) pair(c config.Config) (vaadin, boot string, ok bool) {
-	vaadin, boot = c.VaadinVersion, c.BootVersion
-	if vaadin == custom {
-		vaadin = t.vaadin
-	}
-	if boot == custom {
-		boot = t.boot
-	}
-	return vaadin, boot, vaadin != "" && boot != ""
-}
-
 // Run asks the questions, seeded from c, and returns the answers.
 //
 // Two conversations, not one. The full-screen form puts every section on one
@@ -318,13 +267,16 @@ func runAccessible(c config.Config, lookup VersionSource, options Options) (conf
 
 	// Derived in order, each from the one before, the way the screen derives
 	// them as they are chosen: the newest Vaadin, the Boot it was built with,
-	// and a Java both allow.
+	// a Java both allow, and a theme the Vaadin ships.
 	available := lookup()
 	c.VaadinVersion = withFallback(offer(available.Vaadin), c.VaadinVersion)[0]
 	_, c.BootVersion = bootChoices(options.Rules, c.VaadinVersion, available.Boot,
 		options.pinned(c.VaadinVersion), c.BootVersion)
 	if _, open, _ := javaChoices(options.Rules, c.VaadinVersion, c.BootVersion, c.JavaVersion); open != "" {
 		c.JavaVersion = open
+	}
+	if theme := options.Rules.ThemeDefault(c.VaadinVersion, c.Theme); theme != "" {
+		c.Theme = theme
 	}
 
 	features := selectedFeatures(c)
@@ -443,16 +395,14 @@ func (o Options) pinned(vaadin string) string {
 // versionGroup asks for the versions in accessible mode: plain inputs,
 // pre-filled with the derived answers.
 //
-// No select and no escape hatch, because huh asks a hidden group's questions
-// anyway in accessible mode, so the select-plus-follow-up shape the screen uses
-// would ask for each version twice. An input already offers a default to accept
-// or type over, which is the whole of what the select was buying.
+// Inputs rather than selects: an input offers a default to accept or type over,
+// which is the whole of what a list read out one number at a time would buy, and
+// it is the one place a release the lookup did not offer can still be named.
 //
 // The validators read the earlier answers when they run, not when the form is
 // built, so a Boot typed over the default is still checked against the Vaadin
 // typed just before it.
 func versionGroup(c *config.Config, available versions.Available, options Options) *huh.Group {
-	var typed typedVersions
 	return huh.NewGroup(
 		huh.NewInput().
 			Prompt(ui.Caret).
@@ -465,21 +415,21 @@ func versionGroup(c *config.Config, available versions.Available, options Option
 			Title("Spring Boot version").
 			Description(versionNote(available.Boot)).
 			Value(&c.BootVersion).
-			Validate(options.validator(bootValidator(options.Rules, c, &typed))),
+			Validate(options.validator(bootValidator(options.Rules, c))),
 		huh.NewInput().
 			Prompt(ui.Caret).
 			Title("Java version").
 			Description(options.Rules.Describe(c.VaadinVersion, c.BootVersion)).
 			Value(&c.JavaVersion).
-			Validate(options.validator(javaValidator(options.Rules, c, &typed))),
+			Validate(options.validator(javaValidator(options.Rules, c))),
 	).Title("Versions").
 		Description("Pinned in pom.xml, and in run.conf for the task runner.")
 }
 
-// The validators for a version that was typed rather than chosen from a list:
-// the shape, and then the rules. A version from a line this tool does not
-// generate is refused at the field, where the answer can still be changed,
-// rather than after the last question.
+// The validators for a version typed in accessible mode: the shape, and then the
+// rules. A version from a line this tool does not generate is refused at the
+// field, where the answer can still be changed, rather than after the last
+// question.
 
 func vaadinValidator(rules compat.Rules) func(string) error {
 	return func(s string) error {
@@ -491,30 +441,22 @@ func vaadinValidator(rules compat.Rules) func(string) error {
 	}
 }
 
-func bootValidator(rules compat.Rules, c *config.Config, typed *typedVersions) func(string) error {
+func bootValidator(rules compat.Rules, c *config.Config) func(string) error {
 	return func(s string) error {
 		if err := config.ValidVersion(s); err != nil {
 			return err
 		}
-		vaadin, _, _ := typed.pair(*c)
-		if vaadin == "" {
-			return nil
-		}
-		return rules.CheckBoot(vaadin, s)
+		return rules.CheckBoot(c.VaadinVersion, s)
 	}
 }
 
-func javaValidator(rules compat.Rules, c *config.Config, typed *typedVersions) func(string) error {
+func javaValidator(rules compat.Rules, c *config.Config) func(string) error {
 	return func(s string) error {
 		if err := config.ValidJavaVersion(s); err != nil {
 			return err
 		}
-		vaadin, boot, ok := typed.pair(*c)
-		if !ok {
-			return nil
-		}
 		java, _ := strconv.Atoi(s)
-		return rules.CheckJava(vaadin, boot, java)
+		return rules.CheckJava(c.VaadinVersion, c.BootVersion, java)
 	}
 }
 
@@ -544,7 +486,7 @@ func bootChoices(rules compat.Rules, vaadin string, fetched []string, pinned, fa
 // every major: a feature release older than the newest is out of support the day
 // the next one ships, so a list of them is a list of JDKs nobody should start a
 // project on — and a list of six is what pushes the Versions column past a
-// terminal that tiled. The escape hatch takes the rest, and the rules accept them.
+// terminal that tiled. --java-version names the rest, and the rules accept them.
 //
 // The cursor opens on the preferred release — the defaults file's — when the
 // range allows it, and on the newest LTS in the range when it does not, with the
@@ -555,7 +497,7 @@ func javaChoices(rules compat.Rules, vaadin, boot, preferred string) (list []str
 		return nil, "", firstLine(err.Error())
 	}
 	// No ceiling written down for this Boot line: offer up to the newest JDK any
-	// line in the rules supports, and let the escape hatch take the rest.
+	// line in the rules supports.
 	if ceiling == 0 {
 		ceiling = max(floor, rules.NewestJava())
 	}
@@ -584,8 +526,7 @@ func firstLine(s string) string {
 	return line
 }
 
-// versionOptions is a version list as a select's options, with the escape hatch
-// last.
+// versionOptions is a version list as a select's options.
 func versionOptions(list []string) []huh.Option[string] {
 	return labelled(list, func(v string) string { return v })
 }
@@ -616,11 +557,11 @@ func javaOptions(rules compat.Rules, list []string) []huh.Option[string] {
 }
 
 func labelled(list []string, label func(string) string) []huh.Option[string] {
-	options := make([]huh.Option[string], 0, len(list)+1)
+	options := make([]huh.Option[string], 0, len(list))
 	for _, v := range list {
 		options = append(options, huh.NewOption(label(v), v))
 	}
-	return append(options, huh.NewOption("type one myself…", custom))
+	return options
 }
 
 func versionSelect(title, description string, list []string, value *string) *huh.Select[string] {
@@ -792,28 +733,44 @@ const (
 	stackDescription = "The core is always generated. Choose its theme, and the rest."
 )
 
-// themeOptions are the two themes in the order they are offered, the default
-// first. A variable rather than written into the select, so a test can find a
-// theme's position in the list the way a screen reader is read it.
-var themeOptions = []huh.Option[string]{
-	huh.NewOption("Aura", config.ThemeAura),
-	huh.NewOption("Lumo", config.ThemeLumo),
+// themeOptions are the themes a Vaadin version ships, in the order the rules
+// list them — the line's default first — named for a person. A version with no
+// rule offers whatever the Config holds, so the select is never empty.
+func themeOptions(rules compat.Rules, vaadin string, fallback string) []huh.Option[string] {
+	return labelled(withFallback(rules.Themes(vaadin), fallback), func(theme string) string {
+		return config.Config{Theme: theme}.ThemeName()
+	})
 }
 
-// themeSelect asks which of the two Vaadin themes the project loads.
+// themeSelect asks which of the chosen Vaadin's themes the project loads.
 //
 // In the Stack section rather than one of its own: two options do not fill a
 // column, and a sixth column is what takes the width from the other five that
 // pushes a terminal which tiled out of tiling.
-func themeSelect(c *config.Config) *huh.Select[string] {
+//
+// Validated against the Vaadin as answered: in accessible mode the list is built
+// before the Vaadin is typed, and a theme the typed line does not ship has to be
+// refused at the field rather than after the last question.
+func themeSelect(c *config.Config, options Options) *huh.Select[string] {
 	return huh.NewSelect[string]().
 		Title("Theme").
-		// One line at the narrowest column that tiles. The utility classes that
-		// come with Lumo are said where they are loaded, in the generated code.
-		Description("Aura is the Vaadin 25 default.").
+		Description(themeNote(options.Rules, c.VaadinVersion)).
 		// Value before Options, for the reason given in versionSelect.
 		Value(&c.Theme).
-		Options(themeOptions...)
+		Options(themeOptions(options.Rules, c.VaadinVersion, c.Theme)...).
+		Validate(func(theme string) error { return options.Rules.CheckTheme(c.VaadinVersion, theme) })
+}
+
+// themeNote says which theme the chosen Vaadin's line defaults to: "Aura is the
+// Vaadin 25 default." One line at the narrowest column that tiles. The utility
+// classes that come with Lumo are said where they are loaded, in the generated
+// code. Nothing for a Vaadin the rules do not know.
+func themeNote(rules compat.Rules, vaadin string) string {
+	rule, err := rules.Vaadin(vaadin)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s is the Vaadin %s default.", config.Config{Theme: rule.Themes[0]}.ThemeName(), rule.Line)
 }
 
 // The two halves of who the first commit is by. Nothing is offered unless git had
@@ -876,22 +833,9 @@ func directoryInput(c *config.Config, options Options, inline bool) *huh.Input {
 	return input.Description("Created if it does not exist. Must be empty.")
 }
 
-// typedVersionInput is the escape hatch: a version the list did not offer.
-//
-// Bound to a field of its own rather than to the version itself, so it opens
-// empty and the select's answer stays readable as the sentinel it is.
-func typedVersionInput(title, description string, value *string, validate func(string) error) *huh.Input {
-	return huh.NewInput().
-		Prompt(ui.Caret).
-		Title(title).
-		Description(description).
-		Value(value).
-		Validate(validate)
-}
-
 // fields are the questions the full-screen form has to reach back into once it
 // is built: the coordinates everything else follows from, the answers that
-// follow them, and the three lists that follow the lookup and each other.
+// follow them, and the four lists that follow the lookup and each other.
 type fields struct {
 	projectName *huh.Input
 	pkg         *huh.Input
@@ -899,6 +843,7 @@ type fields struct {
 	vaadin      *huh.Select[string]
 	boot        *huh.Select[string]
 	java        *huh.Select[string]
+	theme       *huh.Select[string]
 }
 
 // spanning is a section with a row of its own under the columns, the width of
@@ -911,17 +856,11 @@ func spanning(title, description string, hide func() bool, fields ...huh.Field) 
 
 // sections is the whole conversation as the columns of one screen, in the order
 // they are read across.
-//
-// The escape hatches come last and are hidden until a version select is left on
-// "type one myself", so they cost nothing on the screen until they are asked for
-// — and, being last, the numbered sections in front of them keep their numbers
-// when they appear.
 func newSections(
 	c *config.Config,
 	f *fields,
 	features *[]string,
 	confirmed *bool,
-	typed *typedVersions,
 	available versions.Available,
 	options Options,
 ) []section {
@@ -952,6 +891,11 @@ func newSections(
 		Value(&c.JavaVersion).
 		Options(javaOptions(options.Rules, withFallback(javaList, c.JavaVersion))...)
 
+	if theme := options.Rules.ThemeDefault(c.VaadinVersion, c.Theme); theme != "" {
+		c.Theme = theme
+	}
+	f.theme = themeSelect(c, options)
+
 	return []section{
 		newSection("Coordinates", "What this project is called to Maven.", nil,
 			groupIDInput(c, options),
@@ -968,7 +912,7 @@ func newSections(
 			f.java),
 
 		newSection(stackTitle, stackDescription, nil,
-			themeSelect(c),
+			f.theme,
 			stackSelect(c, features)),
 
 		// A row of its own above Output, and only there when git could not answer
@@ -994,21 +938,6 @@ func newSections(
 				Affirmative("Generate").
 				Negative("").
 				Value(confirmed)),
-
-		newSection("Vaadin version", "Typed, not offered.",
-			func() bool { return c.VaadinVersion != custom },
-			typedVersionInput("Vaadin version", "A version Maven Central did not offer.",
-				&typed.vaadin, vaadinValidator(options.Rules))),
-
-		newSection("Spring Boot version", "Typed, not offered.",
-			func() bool { return c.BootVersion != custom },
-			typedVersionInput("Spring Boot version", "A version Maven Central did not offer.",
-				&typed.boot, bootValidator(options.Rules, c, typed))),
-
-		newSection("Java version", "Typed, not offered.",
-			func() bool { return c.JavaVersion != custom },
-			typedVersionInput("Java version", "A JDK major the rules did not list.",
-				&typed.java, javaValidator(options.Rules, c, typed))),
 	}
 }
 
@@ -1049,7 +978,7 @@ func restForm(
 		versionGroup(c, available, options),
 
 		huh.NewGroup(
-			themeSelect(c),
+			themeSelect(c, options),
 			stackSelect(c, features),
 		).Title(stackTitle).
 			Description(stackDescription),

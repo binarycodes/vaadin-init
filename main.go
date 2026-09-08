@@ -267,12 +267,13 @@ func run(args []string) error {
 	} else {
 		// Outside the TUI the versions are derived the way the screen derives
 		// them — the newest Vaadin, the Boot it was built with, a Java both
-		// allow — so a scripted run and an interactive one come to the same
-		// numbers. A version that was typed is used as typed, and refused below
-		// if the three do not go together.
+		// allow, a theme the Vaadin ships — so a scripted run and an interactive
+		// one come to the same answers. A version that was typed is used as
+		// typed, and refused below if the set does not go together.
 		//
 		// Nothing is fetched when every version was typed: a fully pinned run
-		// needs no network, and should not wait on one.
+		// needs no network, and should not wait on one. The theme then stays as
+		// the defaults file or the flag named it, and Validate has the last word.
 		if !set["vaadin-version"] || !set["boot-version"] || !set["java-version"] {
 			available := lookup()
 			if !set["vaadin-version"] {
@@ -287,6 +288,11 @@ func run(args []string) error {
 			}
 			if !set["java-version"] {
 				cfg.JavaVersion = javaDefault(rules, cfg)
+			}
+			if !set["theme"] {
+				if theme := rules.ThemeDefault(cfg.VaadinVersion, cfg.Theme); theme != "" {
+					cfg.Theme = theme
+				}
 			}
 		}
 	}

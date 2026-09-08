@@ -192,8 +192,9 @@ func (c Config) Selected() []string {
 // this catches what flags set without ever passing through a prompt.
 //
 // The rules are the one check that spans fields: whether the Vaadin, Spring Boot
-// and Java versions go together. They run after the per-field checks, so a
-// version that is not a version is reported as that and not as incompatible.
+// and Java versions and the theme go together. They run after the per-field
+// checks, so a version that is not a version is reported as that and not as
+// incompatible.
 func (c Config) Validate(rules compat.Rules) error {
 	for _, check := range []struct {
 		field string
@@ -234,7 +235,7 @@ func (c Config) Validate(rules compat.Rules) error {
 			c.AppPort, c.DatabasePort, c.AuthPort)
 	}
 	java, _ := strconv.Atoi(c.JavaVersion)
-	return rules.Check(c.VaadinVersion, c.BootVersion, java)
+	return rules.Check(c.VaadinVersion, c.BootVersion, java, c.Theme)
 }
 
 // portsNeeded is how many distinct ports a project takes: the application,

@@ -34,7 +34,6 @@ func runScreen(c config.Config, lookup VersionSource, options Options) (Session,
 		return Session{Config: c}, ErrCancelled
 	}
 
-	s.typed.resolve(&c, s.newestVaadin, s.newestBoot, s.newestJava)
 	applyFeatures(&c, s.features)
 	return Session{Config: c, Written: s.phase == written}, nil
 }
@@ -57,13 +56,6 @@ type screen struct {
 
 	features  []string
 	confirmed bool
-	typed     typedVersions
-
-	// The answer each list opened on, for a sentinel left behind by a select
-	// whose escape hatch was then not filled in.
-	newestVaadin string
-	newestBoot   string
-	newestJava   string
 
 	// What the Boot and Java lists are derived from. The Boot list follows the
 	// Vaadin answer and the Java list follows both, the way the derived answers
@@ -73,9 +65,10 @@ type screen struct {
 	available versions.Available
 	from      struct{ vaadin, boot string }
 
-	// The Java the defaults file named, which is where the Java list opens
-	// whenever the chosen pair allows it.
-	preferredJava string
+	// The Java and the theme the defaults file named, which is where those lists
+	// open whenever the chosen Vaadin allows it.
+	preferredJava  string
+	preferredTheme string
 
 	// The Boot the defaults file named: the only Boot to offer when nothing was
 	// fetched and no pin is known.
@@ -162,18 +155,16 @@ type pinMsg struct{ vaadin, boot string }
 
 func newScreen(c *config.Config, lookup VersionSource, options Options) *screen {
 	s := &screen{
-		c:             c,
-		features:      selectedFeatures(*c),
-		confirmed:     true,
-		newestVaadin:  c.VaadinVersion,
-		newestBoot:    c.BootVersion,
-		newestJava:    c.JavaVersion,
-		preferredJava: c.JavaVersion,
-		fallbackBoot:  c.BootVersion,
-		rules:         options.Rules,
-		pin:           options.Pinned,
-		pins:          map[string]string{},
-		lookup:        lookup,
+		c:              c,
+		features:       selectedFeatures(*c),
+		confirmed:      true,
+		preferredJava:  c.JavaVersion,
+		preferredTheme: c.Theme,
+		fallbackBoot:   c.BootVersion,
+		rules:          options.Rules,
+		pin:            options.Pinned,
+		pins:           map[string]string{},
+		lookup:         lookup,
 		// Trimmed of the blank lines it is printed with: in a screen of its own
 		// the banner is the top of the page, and a blank row above it is a row
 		// the questions do not get.
@@ -195,9 +186,8 @@ func newScreen(c *config.Config, lookup VersionSource, options Options) *screen 
 	// here either — newSections is given no pin source — because a blocking call
 	// before the screen is up is exactly the wait the lookup was moved off of.
 	options.Pinned = nil
-	sections := newSections(c, s.fields, &s.features, &s.confirmed, &s.typed,
+	sections := newSections(c, s.fields, &s.features, &s.confirmed,
 		versions.Available{}, options)
-	s.newestBoot, s.newestJava = c.BootVersion, c.JavaVersion
 	s.from.vaadin, s.from.boot = c.VaadinVersion, c.BootVersion
 
 	s.tiled = &tiled{sections: sections}
@@ -315,11 +305,6 @@ func (s *screen) pass(msg tea.Msg) tea.Cmd {
 	if s.form.State != huh.StateNormal {
 		return s.finish()
 	}
-	// An escape hatch that has just appeared, or been answered and hidden again,
-	// changes how the width is shared out.
-	if len(s.tiled.shown()) != s.shown {
-		return tea.Batch(cmd, s.relayout())
-	}
 	return cmd
 }
 
@@ -336,10 +321,8 @@ func (s *screen) finish() tea.Cmd {
 
 	s.phase = writing
 
-	// The answers are only complete once the sentinels a select may have been
-	// left on are resolved, and the stack multi-select is written back.
+	// The answers are only complete once the stack multi-select is written back.
 	c := *s.c
-	s.typed.resolve(&c, s.newestVaadin, s.newestBoot, s.newestJava)
 	applyFeatures(&c, s.features)
 
 	return func() tea.Msg {
@@ -430,12 +413,11 @@ func (s *screen) track(field *huh.Input, bound, derived *string, next string) {
 func (s *screen) offer(available versions.Available) tea.Cmd {
 	s.available = available
 	vaadin := offer(available.Vaadin)
-	s.newestVaadin = withFallback(vaadin, s.newestVaadin)[0]
 
 	if len(vaadin) > 0 && !s.visited[s.fields.vaadin] {
 		// The newest release is the answer being offered, so it is the one the
 		// cursor has to open on — and huh takes the cursor from the bound value.
-		s.c.VaadinVersion = s.newestVaadin
+		s.c.VaadinVersion = vaadin[0]
 		s.fields.vaadin.Options(versionOptions(vaadin)...)
 		s.fields.vaadin.Description(versionNote(vaadin))
 	}
@@ -445,15 +427,18 @@ func (s *screen) offer(available versions.Available) tea.Cmd {
 	return s.derive()
 }
 
-// derive re-derives the Boot list when the Vaadin answer has changed, and the
-// Java list when either answer above it has, and asks for the pin of a Vaadin
-// release not asked about before.
+// derive re-derives what follows an answer that has changed: the Boot and theme
+// lists when the Vaadin answer has, the Java list when either version above it
+// has. Nothing follows the Java or the theme, and nothing on the screen can be
+// chosen from a list that was not derived for the answers above it. It also asks
+// for the pin of a Vaadin release not asked about before.
 func (s *screen) derive() tea.Cmd {
 	var cmd tea.Cmd
 	if s.c.VaadinVersion != s.from.vaadin {
 		s.from.vaadin = s.c.VaadinVersion
 		cmd = s.fetchPin(s.c.VaadinVersion)
 		s.deriveBoot()
+		s.deriveTheme()
 	}
 	if s.c.BootVersion != s.from.boot {
 		s.from.boot = s.c.BootVersion
@@ -463,9 +448,9 @@ func (s *screen) derive() tea.Cmd {
 }
 
 // fetchPin asks the pin source, once per Vaadin release, from a command so the
-// screen never waits on it. A sentinel is not a release to ask about.
+// screen never waits on it.
 func (s *screen) fetchPin(vaadin string) tea.Cmd {
-	if s.pin == nil || vaadin == custom {
+	if s.pin == nil {
 		return nil
 	}
 	if _, asked := s.pins[vaadin]; asked {
@@ -479,15 +464,11 @@ func (s *screen) fetchPin(vaadin string) tea.Cmd {
 //
 // A choice already made in the list is kept if the new list still has it, and
 // the cursor is moved to where the list opens otherwise: the pinned release, or
-// the newest the rules allow. Choosing to type one is kept whatever the list.
+// the newest the rules allow.
 func (s *screen) deriveBoot() {
 	vaadin := s.c.VaadinVersion
-	if vaadin == custom {
-		return
-	}
 	pinned := s.pins[vaadin]
 	list, open := bootChoices(s.rules, vaadin, s.available.Boot, pinned, s.fallbackBoot)
-	s.newestBoot = open
 	s.keep(s.fields.boot, &s.c.BootVersion, list, open)
 	relist(s.fields.boot, &s.c.BootVersion, bootOptions(list, pinned, vaadin))
 	s.fields.boot.Description(versionNote(s.available.Boot))
@@ -498,24 +479,31 @@ func (s *screen) deriveBoot() {
 // the Boot is the offline fallback — leaves the list as it was and says why.
 func (s *screen) deriveJava() {
 	vaadin, boot := s.c.VaadinVersion, s.c.BootVersion
-	if vaadin == custom || boot == custom {
-		return
-	}
 	list, open, note := javaChoices(s.rules, vaadin, boot, s.preferredJava)
 	s.fields.java.Description(note)
 	if len(list) == 0 {
 		return
 	}
-	s.newestJava = open
 	s.keep(s.fields.java, &s.c.JavaVersion, list, open)
 	relist(s.fields.java, &s.c.JavaVersion, javaOptions(s.rules, list))
 }
 
+// deriveTheme rebuilds the theme list for the Vaadin answer: the themes its line
+// ships, opening on the defaults file's theme when that is one of them.
+func (s *screen) deriveTheme() {
+	list := s.rules.Themes(s.c.VaadinVersion)
+	if len(list) == 0 {
+		return
+	}
+	s.keep(s.fields.theme, &s.c.Theme, list, s.rules.ThemeDefault(s.c.VaadinVersion, s.preferredTheme))
+	relist(s.fields.theme, &s.c.Theme, themeOptions(s.rules, s.c.VaadinVersion, s.c.Theme))
+	s.fields.theme.Description(themeNote(s.rules, s.c.VaadinVersion))
+}
+
 // keep decides where a re-derived list's cursor goes: on the choice already made
-// in it when that is still offered or is the escape hatch, and where the list
-// opens otherwise.
+// in it when that is still offered, and where the list opens otherwise.
 func (s *screen) keep(field *huh.Select[string], value *string, list []string, open string) {
-	if *value == custom || (s.visited[field] && slices.Contains(list, *value)) {
+	if s.visited[field] && slices.Contains(list, *value) {
 		return
 	}
 	*value = open
@@ -663,8 +651,8 @@ func (s *screen) View() string {
 
 	// The bar is held against the bottom edge rather than left to follow what is
 	// above it. The form is a different height in every section — and a different
-	// height again when a box is stretched or an escape hatch appears — so a bar
-	// that follows it moves about, and a row of keys that moves is one the eye has
+	// height again when a box is stretched — so a bar that follows it moves
+	// about, and a row of keys that moves is one the eye has
 	// to find again every time it is needed. It is also what makes the summary
 	// arrive on the same screen the questions were asked on rather than a new one.
 	filler := max(s.height-lipgloss.Height(body)-2, 0)

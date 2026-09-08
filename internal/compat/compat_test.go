@@ -137,35 +137,38 @@ func TestCheck(t *testing.T) {
 	cases := []struct {
 		vaadin, boot string
 		java         int
+		theme        string
 		wantErr      string // a fragment, or "" for accepted
 	}{
-		{"25.2.6", "4.1.0", 21, ""},
-		{"25.2.6", "4.1.1", 25, ""},
-		{"25.2.6", "4.1.0", 26, ""}, // java_max is inclusive
-		{"25.2.6", "4.1.0", 27, "java version: Spring Boot 4.1 supports Java up to 26; got 27"},
-		{"25.2.6", "4.1.0", 17, "java version: Vaadin 25 needs Java 21 or newer; got 17"},
-		{"25.2.6", "4.0.8", 21, "spring boot version: Vaadin 25.2.6 needs Spring Boot 4.1.0 or newer; got 4.0.8"},
-		{"25.1.0", "4.0.0", 21, "spring boot version: Vaadin 25.1.0 needs Spring Boot 4.0.4 or newer; got 4.0.0"},
-		{"25.0.5", "4.0.0", 21, ""},
-		{"25.2.6", "3.5.15", 21, "spring boot version: Vaadin 25 sits on Spring Boot 4; got 3.5.15"},
-		{"24.10.9", "3.5.15", 17, "vaadin version: this tool generates Vaadin 25 projects"},
-		{"24.10.9", "4.1.0", 21, "vaadin version:"},
-		{"25.2.6", "4.2.0", 30, ""}, // no rule for 4.2 yet, so no ceiling to break
+		{"25.2.6", "4.1.0", 21, "aura", ""},
+		{"25.2.6", "4.1.1", 25, "aura", ""},
+		{"25.2.6", "4.1.0", 26, "aura", ""}, // java_max is inclusive
+		{"25.2.6", "4.1.0", 27, "aura", "java version: Spring Boot 4.1 supports Java up to 26; got 27"},
+		{"25.2.6", "4.1.0", 17, "aura", "java version: Vaadin 25 needs Java 21 or newer; got 17"},
+		{"25.2.6", "4.0.8", 21, "aura", "spring boot version: Vaadin 25.2.6 needs Spring Boot 4.1.0 or newer; got 4.0.8"},
+		{"25.1.0", "4.0.0", 21, "aura", "spring boot version: Vaadin 25.1.0 needs Spring Boot 4.0.4 or newer; got 4.0.0"},
+		{"25.0.5", "4.0.0", 21, "aura", ""},
+		{"25.2.6", "3.5.15", 21, "aura", "spring boot version: Vaadin 25 sits on Spring Boot 4; got 3.5.15"},
+		{"24.10.9", "3.5.15", 17, "aura", "vaadin version: this tool generates Vaadin 25 projects"},
+		{"24.10.9", "4.1.0", 21, "aura", "vaadin version:"},
+		{"25.2.6", "4.2.0", 30, "aura", ""}, // no rule for 4.2 yet, so no ceiling to break
+		{"25.2.6", "4.1.0", 21, "lumo", ""},
+		{"25.2.6", "4.1.0", 21, "material", "theme: Vaadin 25 ships aura and lumo, not material"},
 	}
 	for _, c := range cases {
-		err := r.Check(c.vaadin, c.boot, c.java)
+		err := r.Check(c.vaadin, c.boot, c.java, c.theme)
 		switch {
 		case c.wantErr == "" && err != nil:
-			t.Errorf("Check(%s, %s, %d) = %v, want accepted", c.vaadin, c.boot, c.java, err)
+			t.Errorf("Check(%s, %s, %d, %s) = %v, want accepted", c.vaadin, c.boot, c.java, c.theme, err)
 		case c.wantErr != "" && err == nil:
-			t.Errorf("Check(%s, %s, %d) accepted, want %q", c.vaadin, c.boot, c.java, c.wantErr)
+			t.Errorf("Check(%s, %s, %d, %s) accepted, want %q", c.vaadin, c.boot, c.java, c.theme, c.wantErr)
 		case c.wantErr != "" && !strings.Contains(err.Error(), c.wantErr):
-			t.Errorf("Check(%s, %s, %d) = %q, want %q", c.vaadin, c.boot, c.java, err, c.wantErr)
+			t.Errorf("Check(%s, %s, %d, %s) = %q, want %q", c.vaadin, c.boot, c.java, c.theme, err, c.wantErr)
 		}
 	}
 
 	// The source is quoted so the fix is a read and an edit.
-	err := r.Check("25.2.6", "4.0.8", 21)
+	err := r.Check("25.2.6", "4.0.8", 21, "aura")
 	if err == nil || !strings.Contains(err.Error(), "https://github.com/vaadin/platform/releases/tag/25.2.0") {
 		t.Errorf("Check should cite the rule's source: %v", err)
 	}
@@ -204,6 +207,32 @@ func TestBareChecks(t *testing.T) {
 	}
 	if err := r.CheckJava("25.2.6", "4.0.8", 21); err == nil || !strings.Contains(err.Error(), "4.1.0 or newer") {
 		t.Errorf("CheckJava should refuse the pair first: %v", err)
+	}
+}
+
+// Aura is a Vaadin 25 theme; 24 ships Lumo alone.
+func TestThemes(t *testing.T) {
+	r := rules(t)
+	if got := strings.Join(r.Themes("25.2.6"), " "); got != "aura lumo" {
+		t.Errorf("Themes(25.2.6) = %q", got)
+	}
+	if got := r.Themes("24.10.9"); got != nil {
+		t.Errorf("Themes of an unsupported line = %v, want nothing", got)
+	}
+	if err := r.CheckTheme("25.2.6", "lumo"); err != nil {
+		t.Errorf("CheckTheme(25.2.6, lumo) = %v", err)
+	}
+	if err := r.CheckTheme("25.2.6", "material"); err == nil || !strings.Contains(err.Error(), "ships aura and lumo, not material") {
+		t.Errorf("CheckTheme(25.2.6, material) = %v", err)
+	}
+	if got := r.ThemeDefault("25.2.6", "lumo"); got != "lumo" {
+		t.Errorf("ThemeDefault keeps a theme the line ships: %q", got)
+	}
+	if got := r.ThemeDefault("25.2.6", "material"); got != "aura" {
+		t.Errorf("ThemeDefault falls back to the line's own: %q", got)
+	}
+	if got := r.ThemeDefault("24.10.9", "aura"); got != "" {
+		t.Errorf("ThemeDefault of an unsupported line = %q, want nothing", got)
 	}
 }
 
@@ -250,7 +279,7 @@ func TestAnOverrideWinsPerLine(t *testing.T) {
 	override := `{
 	  "vaadin": [
 	    {"line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "4.1.0",
-	     "since": [{"vaadin": "25.3.0", "boot_min": "4.2.0"}], "source": "local"}
+	     "since": [{"vaadin": "25.3.0", "boot_min": "4.2.0"}], "themes": ["aura"], "source": "local"}
 	  ],
 	  "boot": [
 	    {"line": "4.2", "java_min": 17, "java_max": 27, "eol": "2028-01-31", "source": "local"}
@@ -293,26 +322,26 @@ func TestAMalformedFileIsRejectedNamingTheEntry(t *testing.T) {
 	}{
 		{
 			"boot_min unparsable",
-			`{"vaadin": [{"line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "four", "source": ""}],
+			`{"vaadin": [{"line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "four", "themes": ["aura"], "source": ""}],
 			  "boot": [], "java": {"lts": [21]}}`,
 			`vaadin line "25": boot_min: "four" is not a version`,
 		},
 		{
 			"boot_min outside its line",
-			`{"vaadin": [{"line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "3.5.0", "source": ""}],
+			`{"vaadin": [{"line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "3.5.0", "themes": ["aura"], "source": ""}],
 			  "boot": [], "java": {"lts": [21]}}`,
 			`boot_min: "3.5.0" is not in line 4`,
 		},
 		{
 			"since outside its line",
 			`{"vaadin": [{"line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "4.0.0",
-			   "since": [{"vaadin": "24.1.0", "boot_min": "4.0.4"}], "source": ""}],
+			   "since": [{"vaadin": "24.1.0", "boot_min": "4.0.4"}], "themes": ["aura"], "source": ""}],
 			  "boot": [], "java": {"lts": [21]}}`,
 			`since: vaadin: "24.1.0" is not in line 25`,
 		},
 		{
 			"an unknown key",
-			`{"vaadin": [{"line": "25", "supported": true, "java_mim": 21, "boot_line": "4", "boot_min": "4.0.0", "source": ""}],
+			`{"vaadin": [{"line": "25", "supported": true, "java_mim": 21, "boot_line": "4", "boot_min": "4.0.0", "themes": ["aura"], "source": ""}],
 			  "boot": [], "java": {"lts": [21]}}`,
 			`java_mim`,
 		},
@@ -331,6 +360,12 @@ func TestAMalformedFileIsRejectedNamingTheEntry(t *testing.T) {
 			`{"vaadin": [], "boot": [{"line": "4.1", "java_min": 17, "java_max": 26, "eol": "", "source": ""},
 			  {"line": "4.1", "java_min": 17, "java_max": 26, "eol": "", "source": ""}], "java": {"lts": [21]}}`,
 			`boot line "4.1": listed twice`,
+		},
+		{
+			"no themes",
+			`{"vaadin": [{"line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "4.0.0", "source": ""}],
+			  "boot": [], "java": {"lts": [21]}}`,
+			`vaadin line "25": themes must name at least one theme`,
 		},
 		{
 			"no lts list",

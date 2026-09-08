@@ -1,13 +1,14 @@
 {
   "$comment": [
-    "Which Spring Boot and JDK go with a Vaadin release. Rules only: the exact",
-    "releases are looked up on Maven Central, and the Boot a Vaadin release was",
-    "built with is read from its published starter pom.",
+    "Which Spring Boot, JDK and themes go with a Vaadin release. Rules only: the",
+    "exact releases are looked up on Maven Central, and the Boot a Vaadin release",
+    "was built with is read from its published starter pom.",
     "",
     "To change: read the release notes for the new Vaadin minor or Spring Boot",
     "minor, add or tighten the entry, cite the URL in source, open a pull request.",
     "A Vaadin line is `supported` when this tool has templates for it. `since`",
-    "tightens boot_min from a release onwards without splitting the line.",
+    "tightens boot_min from a release onwards without splitting the line. `themes`",
+    "lists the themes the line ships, the default first.",
     "java_max is inclusive. A weekly CI job checks this file against what Maven",
     "Central publishes and fails, quoting source, when the two have drifted.",
     "",
@@ -22,6 +23,7 @@
       "java_min": 21,
       "boot_line": "4",
       "boot_min": "4.0.0",
+      "themes": ["aura", "lumo"],
       "since": [
         { "vaadin": "25.1.0", "boot_min": "4.0.4" },
         { "vaadin": "25.2.0", "boot_min": "4.1.0" }
@@ -34,6 +36,7 @@
       "java_min": 17,
       "boot_line": "3",
       "boot_min": "3.5.0",
+      "themes": ["lumo"],
       "source": "https://vaadin.com/docs/v24/compatibility"
     }
   ],
