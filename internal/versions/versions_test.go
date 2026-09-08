@@ -40,50 +40,91 @@ func TestStableVersionsSortsNumericallyAndDropsPreReleases(t *testing.T) {
 		"25.3.0-alpha2",
 	))
 
-	got, err := stableVersions(context.Background(), server.Client(), server.URL, 25)
+	got, err := stableVersions(context.Background(), server.Client(), server.URL, []string{"25"})
 	if err != nil {
 		t.Fatalf("stableVersions: %v", err)
 	}
 
-	// Newest first. Truncated to what the tool offers rather than repeating that
-	// number here, so changing it is one edit and this test keeps testing order.
-	want := []string{"25.2.6", "25.2.5", "25.2.0", "25.1.11", "25.1.10", "25.1.9"}
-	if len(want) > offered {
-		want = want[:offered]
-	}
-	if len(got) != len(want) {
+	// Newest first, and every release of the line: how many to offer is the
+	// caller's decision.
+	want := "25.2.6 25.2.5 25.2.0 25.1.11 25.1.10 25.1.9"
+	if strings.Join(got, " ") != want {
 		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("got %v, want %v", got, want)
-		}
 	}
 }
 
-func TestStableVersionsCapsTheList(t *testing.T) {
-	var many []string
-	for patch := 0; patch < offered*3; patch++ {
-		many = append(many, fmt.Sprintf("25.1.%d", patch))
-	}
-	server := serve(t, http.StatusOK, metadataDocument(many...))
+// The lines come from the compatibility rules, and a lookup asked for two lines
+// keeps both.
+func TestStableVersionsKeepsEveryLineAskedFor(t *testing.T) {
+	server := serve(t, http.StatusOK, metadataDocument("3.5.15", "4.0.8", "4.1.1", "5.0.0"))
 
-	got, err := stableVersions(context.Background(), server.Client(), server.URL, 25)
+	got, err := stableVersions(context.Background(), server.Client(), server.URL, []string{"4", "3.5"})
 	if err != nil {
 		t.Fatalf("stableVersions: %v", err)
 	}
-	if len(got) != offered {
-		t.Fatalf("got %d versions, want the list capped at %d", len(got), offered)
-	}
-	if got[0] != fmt.Sprintf("25.1.%d", offered*3-1) {
-		t.Errorf("the newest release should be first, got %q", got[0])
+	if want := "4.1.1 4.0.8 3.5.15"; strings.Join(got, " ") != want {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }
 
 func TestStableVersionsReportsAnErrorStatus(t *testing.T) {
 	server := serve(t, http.StatusInternalServerError, "nope")
-	if _, err := stableVersions(context.Background(), server.Client(), server.URL, 25); err == nil {
+	if _, err := stableVersions(context.Background(), server.Client(), server.URL, []string{"25"}); err == nil {
 		t.Fatal("a 500 should be an error")
+	}
+}
+
+// Two captured starter poms, cut down to the dependency that matters: Vaadin 24
+// depends on spring-boot-starter-web, Vaadin 25 on spring-boot-starter-webmvc.
+func starterPom(artifact, boot string) string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.vaadin</groupId>
+  <artifactId>vaadin-spring-boot-starter</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>com.vaadin</groupId>
+      <artifactId>vaadin-spring</artifactId>
+      <version>25.2.6</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>` + artifact + `</artifactId>
+      <version>` + boot + `</version>
+    </dependency>
+  </dependencies>
+</project>`
+}
+
+func TestPinnedBootReadsTheStarterPom(t *testing.T) {
+	for _, c := range []struct{ artifact, boot string }{
+		{"spring-boot-starter-web", "3.5.15"},
+		{"spring-boot-starter-webmvc", "4.1.0"},
+	} {
+		server := serve(t, http.StatusOK, starterPom(c.artifact, c.boot))
+		got, err := pinnedBoot(context.Background(), server.Client(), server.URL)
+		if err != nil {
+			t.Fatalf("pinnedBoot(%s): %v", c.artifact, err)
+		}
+		if got != c.boot {
+			t.Errorf("pinnedBoot(%s) = %q, want %q", c.artifact, got, c.boot)
+		}
+	}
+}
+
+// A release Maven Central has no starter for — one that was typed — is not a
+// failure; there is simply no pin, and the caller falls back to the rules.
+func TestPinnedBootIsEmptyForAnUnknownRelease(t *testing.T) {
+	server := serve(t, http.StatusNotFound, "not here")
+	got, err := pinnedBoot(context.Background(), server.Client(), server.URL)
+	if err != nil || got != "" {
+		t.Errorf("pinnedBoot = %q, %v; want empty and no error", got, err)
+	}
+
+	server = serve(t, http.StatusOK, `<project><dependencies/></project>`)
+	if _, err := pinnedBoot(context.Background(), server.Client(), server.URL); err == nil {
+		t.Error("a pom with no Boot dependency should be an error")
 	}
 }
 
@@ -97,13 +138,13 @@ func TestLookupDegradesWhenUnreachable(t *testing.T) {
 	client := server.Client()
 	server.Close()
 
-	if _, err := stableVersions(context.Background(), client, server.URL, 25); err == nil {
+	if _, err := stableVersions(context.Background(), client, server.URL, []string{"25"}); err == nil {
 		t.Fatal("an unreachable host should be an error at this level")
 	}
 
 	// Lookup swallows that error, because there is nothing the caller can do
 	// with it that is better than keeping the default it already has.
-	available := lookup(context.Background(), client, server.URL, server.URL)
+	available := lookup(context.Background(), client, server.URL, server.URL, Lines{Vaadin: []string{"25"}, Boot: []string{"4"}})
 	if len(available.Vaadin) != 0 || len(available.Boot) != 0 {
 		t.Errorf("expected empty lists from a failed lookup, got %+v", available)
 	}

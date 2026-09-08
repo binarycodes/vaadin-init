@@ -14,12 +14,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 
+	"github.com/binarycodes/vaadin-init/internal/compat"
 	"github.com/binarycodes/vaadin-init/internal/config"
 	"github.com/binarycodes/vaadin-init/internal/ui"
+	"github.com/binarycodes/vaadin-init/internal/version"
 	"github.com/binarycodes/vaadin-init/internal/versions"
 )
 
@@ -35,6 +39,24 @@ var ErrCancelled = errors.New("cancelled")
 // answer is almost always already there, and nobody has waited on the network to
 // be asked their group id.
 type VersionSource func() versions.Available
+
+// PinSource is the Spring Boot release a Vaadin release was built with, or ""
+// when that is not known. It may block on the network, so the screen asks it
+// from a command and the accessible conversation asks it once, between forms.
+type PinSource func(vaadin string) string
+
+// How many releases to offer in a version list. Enough to pick the previous patch
+// or an older minor deliberately, few enough that the list fits a short terminal
+// without scrolling — anyone who wants an older release than these can type it.
+const offered = 5
+
+// offer is the head of a list, newest first, as the select shows it.
+func offer(list []string) []string {
+	if len(list) > offered {
+		return list[:offered]
+	}
+	return list
+}
 
 // custom is the sentinel a version select uses for "let me type one".
 //
@@ -81,6 +103,15 @@ type Options struct {
 	// git could not say — the caller has checked — because a machine that knows
 	// its user should not have them typed in once per project.
 	AskAuthor bool
+
+	// Rules say which Spring Boot and which JDK go with the chosen Vaadin: what
+	// the Boot list is filtered to, what the Java list holds, and what a typed
+	// version is checked against. The rules come from a file, not from here.
+	Rules compat.Rules
+
+	// Pinned is where the Boot list opens: the release the chosen Vaadin was
+	// built with. Left nil, the newest compatible release is offered instead.
+	Pinned PinSource
 
 	// Banner is what the full-screen form prints above the questions. Passed in
 	// rather than built here because it names the tool's own version, which this
@@ -207,12 +238,13 @@ func (r *lineReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// typedVersions holds a version the user typed because the lookup did not offer
+// typedVersions holds a version the user typed because the list did not offer
 // it. Kept apart from the Config until the form is done, so that "the select was
 // left on the sentinel" and "here is the version" stay two separate facts.
 type typedVersions struct {
 	vaadin string
 	boot   string
+	java   string
 }
 
 // resolve replaces a sentinel left by a select with the version typed in the
@@ -221,13 +253,30 @@ type typedVersions struct {
 // A sentinel that somehow reaches here with nothing typed is dropped back to the
 // fallback rather than carried forward: it is not a version, and Validate would
 // reject it in a message about a value the user never entered.
-func (t typedVersions) resolve(c *config.Config, vaadinFallback, bootFallback string) {
+func (t typedVersions) resolve(c *config.Config, vaadinFallback, bootFallback, javaFallback string) {
 	if c.VaadinVersion == custom {
 		c.VaadinVersion = cmp.Or(t.vaadin, vaadinFallback)
 	}
 	if c.BootVersion == custom {
 		c.BootVersion = cmp.Or(t.boot, bootFallback)
 	}
+	if c.JavaVersion == custom {
+		c.JavaVersion = cmp.Or(t.java, javaFallback)
+	}
+}
+
+// pair is the Vaadin and Boot as answered so far — typed where the select was
+// left on the sentinel — or not ok while either is a sentinel with nothing typed
+// yet, which is when a rule about the pair has nothing to say.
+func (t typedVersions) pair(c config.Config) (vaadin, boot string, ok bool) {
+	vaadin, boot = c.VaadinVersion, c.BootVersion
+	if vaadin == custom {
+		vaadin = t.vaadin
+	}
+	if boot == custom {
+		boot = t.boot
+	}
+	return vaadin, boot, vaadin != "" && boot != ""
 }
 
 // Run asks the questions, seeded from c, and returns the answers.
@@ -267,9 +316,16 @@ func runAccessible(c config.Config, lookup VersionSource, options Options) (conf
 	c.Package = config.DerivePackage(c.GroupID, c.ArtifactID)
 	c.OutputDir = c.ArtifactID
 
+	// Derived in order, each from the one before, the way the screen derives
+	// them as they are chosen: the newest Vaadin, the Boot it was built with,
+	// and a Java both allow.
 	available := lookup()
-	c.VaadinVersion = withFallback(available.Vaadin, c.VaadinVersion)[0]
-	c.BootVersion = withFallback(available.Boot, c.BootVersion)[0]
+	c.VaadinVersion = withFallback(offer(available.Vaadin), c.VaadinVersion)[0]
+	_, c.BootVersion = bootChoices(options.Rules, c.VaadinVersion, available.Boot,
+		options.pinned(c.VaadinVersion), c.BootVersion)
+	if _, open, _ := javaChoices(options.Rules, c.VaadinVersion, c.BootVersion, c.JavaVersion); open != "" {
+		c.JavaVersion = open
+	}
 
 	features := selectedFeatures(c)
 	confirmed := true
@@ -376,47 +432,193 @@ func versionNote(fetched []string) string {
 	return "Maven Central could not be reached — this is the built-in default, which may be out of date."
 }
 
+// pinned asks the pin source, if there is one.
+func (o Options) pinned(vaadin string) string {
+	if o.Pinned == nil {
+		return ""
+	}
+	return o.Pinned(vaadin)
+}
+
 // versionGroup asks for the versions in accessible mode: plain inputs,
-// pre-filled with the newest release.
+// pre-filled with the derived answers.
 //
 // No select and no escape hatch, because huh asks a hidden group's questions
 // anyway in accessible mode, so the select-plus-follow-up shape the screen uses
 // would ask for each version twice. An input already offers a default to accept
 // or type over, which is the whole of what the select was buying.
+//
+// The validators read the earlier answers when they run, not when the form is
+// built, so a Boot typed over the default is still checked against the Vaadin
+// typed just before it.
 func versionGroup(c *config.Config, available versions.Available, options Options) *huh.Group {
+	var typed typedVersions
 	return huh.NewGroup(
 		huh.NewInput().
 			Prompt(ui.Caret).
 			Title("Vaadin version").
 			Description(versionNote(available.Vaadin)).
 			Value(&c.VaadinVersion).
-			Validate(options.validator(config.ValidVersion)),
+			Validate(options.validator(vaadinValidator(options.Rules))),
 		huh.NewInput().
 			Prompt(ui.Caret).
 			Title("Spring Boot version").
 			Description(versionNote(available.Boot)).
 			Value(&c.BootVersion).
-			Validate(options.validator(config.ValidVersion)),
-		javaVersionInput(c, options),
+			Validate(options.validator(bootValidator(options.Rules, c, &typed))),
+		huh.NewInput().
+			Prompt(ui.Caret).
+			Title("Java version").
+			Description(options.Rules.Describe(c.VaadinVersion, c.BootVersion)).
+			Value(&c.JavaVersion).
+			Validate(options.validator(javaValidator(options.Rules, c, &typed))),
 	).Title("Versions").
 		Description("Pinned in pom.xml, and in run.conf for the task runner.")
 }
 
-func javaVersionInput(c *config.Config, options Options) *huh.Input {
-	return huh.NewInput().
-		Prompt(ui.Caret).
-		Title("Java version").
-		Description(fmt.Sprintf("Spring Boot %d needs 17 or newer.", versions.BootMajor)).
-		Value(&c.JavaVersion).
-		Validate(options.validator(config.ValidJavaVersion))
+// The validators for a version that was typed rather than chosen from a list:
+// the shape, and then the rules. A version from a line this tool does not
+// generate is refused at the field, where the answer can still be changed,
+// rather than after the last question.
+
+func vaadinValidator(rules compat.Rules) func(string) error {
+	return func(s string) error {
+		if err := config.ValidVersion(s); err != nil {
+			return err
+		}
+		_, err := rules.Vaadin(s)
+		return err
+	}
+}
+
+func bootValidator(rules compat.Rules, c *config.Config, typed *typedVersions) func(string) error {
+	return func(s string) error {
+		if err := config.ValidVersion(s); err != nil {
+			return err
+		}
+		vaadin, _, _ := typed.pair(*c)
+		if vaadin == "" {
+			return nil
+		}
+		return rules.CheckBoot(vaadin, s)
+	}
+}
+
+func javaValidator(rules compat.Rules, c *config.Config, typed *typedVersions) func(string) error {
+	return func(s string) error {
+		if err := config.ValidJavaVersion(s); err != nil {
+			return err
+		}
+		vaadin, boot, ok := typed.pair(*c)
+		if !ok {
+			return nil
+		}
+		java, _ := strconv.Atoi(s)
+		return rules.CheckJava(vaadin, boot, java)
+	}
+}
+
+// bootChoices is what the Boot question offers for a Vaadin version, and where
+// it opens: the compatible releases, newest first, with the release the Vaadin
+// was built with among them whether or not it is one of the newest. Offline —
+// nothing fetched and no pin — the only option is the fallback, which is what the
+// defaults file named.
+func bootChoices(rules compat.Rules, vaadin string, fetched []string, pinned, fallback string) (list []string, open string) {
+	open = rules.BootDefault(vaadin, pinned, fetched)
+	if open == "" {
+		return []string{fallback}, fallback
+	}
+	list = offer(rules.CompatibleBoot(vaadin, fetched))
+	if !slices.Contains(list, open) {
+		list = append(list, open)
+		slices.SortFunc(list, func(a, b string) int { return version.Compare(b, a) })
+	}
+	return list, open
+}
+
+// javaChoices is what the Java question offers for a Vaadin and Boot pair, where
+// it opens, and the line under it saying why. The list is empty when the pair
+// itself is refused, and the note then says so.
+//
+// The long-term-support releases in the range and the newest release in it, not
+// every major: a feature release older than the newest is out of support the day
+// the next one ships, so a list of them is a list of JDKs nobody should start a
+// project on — and a list of six is what pushes the Versions column past a
+// terminal that tiled. The escape hatch takes the rest, and the rules accept them.
+//
+// The cursor opens on the preferred release — the defaults file's — when the
+// range allows it, and on the newest LTS in the range when it does not, with the
+// note saying what was given up.
+func javaChoices(rules compat.Rules, vaadin, boot, preferred string) (list []string, open, note string) {
+	floor, ceiling, err := rules.JavaRange(vaadin, boot)
+	if err != nil {
+		return nil, "", firstLine(err.Error())
+	}
+	// No ceiling written down for this Boot line: offer up to the newest JDK any
+	// line in the rules supports, and let the escape hatch take the rest.
+	if ceiling == 0 {
+		ceiling = max(floor, rules.NewestJava())
+	}
+	want, _ := strconv.Atoi(preferred)
+	chosen, snapped := rules.JavaDefault(floor, ceiling, want)
+	for java := floor; java <= ceiling; java++ {
+		if rules.LTS(java) || java == ceiling || java == chosen {
+			list = append(list, strconv.Itoa(java))
+		}
+	}
+	open = strconv.Itoa(chosen)
+	if !slices.Contains(list, open) {
+		list = append(list, open)
+	}
+	note = rules.Describe(vaadin, boot)
+	if snapped {
+		note += fmt.Sprintf(" The default, %s, is outside that.", preferred)
+	}
+	return list, open, note
+}
+
+// firstLine is an error's message without the source cited under it, for a
+// description a column wide.
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
 }
 
 // versionOptions is a version list as a select's options, with the escape hatch
 // last.
 func versionOptions(list []string) []huh.Option[string] {
+	return labelled(list, func(v string) string { return v })
+}
+
+// bootOptions is the Boot list with the release the Vaadin was built with saying
+// so, since that is the one reason to pick it over a newer one.
+func bootOptions(list []string, pinned, vaadin string) []huh.Option[string] {
+	return labelled(list, func(v string) string {
+		// Without "Vaadin" before the release: the list sits under the Vaadin
+		// list, and the longer label wraps in a column, which puts the list's
+		// rows and the viewport's out of step.
+		if v == pinned {
+			return v + " · built with " + vaadin
+		}
+		return v
+	})
+}
+
+// javaOptions is the Java list with the long-term-support releases marked, since
+// that is the one reason to pick an older one.
+func javaOptions(rules compat.Rules, list []string) []huh.Option[string] {
+	return labelled(list, func(v string) string {
+		if n, _ := strconv.Atoi(v); rules.LTS(n) {
+			return v + " · LTS"
+		}
+		return v
+	})
+}
+
+func labelled(list []string, label func(string) string) []huh.Option[string] {
 	options := make([]huh.Option[string], 0, len(list)+1)
 	for _, v := range list {
-		options = append(options, huh.NewOption(v, v))
+		options = append(options, huh.NewOption(label(v), v))
 	}
 	return append(options, huh.NewOption("type one myself…", custom))
 }
@@ -674,28 +876,29 @@ func directoryInput(c *config.Config, options Options, inline bool) *huh.Input {
 	return input.Description("Created if it does not exist. Must be empty.")
 }
 
-// typedVersionInput is the escape hatch: a version Maven Central did not offer.
+// typedVersionInput is the escape hatch: a version the list did not offer.
 //
 // Bound to a field of its own rather than to the version itself, so it opens
 // empty and the select's answer stays readable as the sentinel it is.
-func typedVersionInput(title string, value *string) *huh.Input {
+func typedVersionInput(title, description string, value *string, validate func(string) error) *huh.Input {
 	return huh.NewInput().
 		Prompt(ui.Caret).
 		Title(title).
-		Description("A version Maven Central did not offer.").
+		Description(description).
 		Value(value).
-		Validate(config.ValidVersion)
+		Validate(validate)
 }
 
 // fields are the questions the full-screen form has to reach back into once it
 // is built: the coordinates everything else follows from, the answers that
-// follow them, and the two lists the version lookup fills in when it lands.
+// follow them, and the three lists that follow the lookup and each other.
 type fields struct {
 	projectName *huh.Input
 	pkg         *huh.Input
 	directory   *huh.Input
 	vaadin      *huh.Select[string]
 	boot        *huh.Select[string]
+	java        *huh.Select[string]
 }
 
 // spanning is a section with a row of its own under the columns, the width of
@@ -709,10 +912,10 @@ func spanning(title, description string, hide func() bool, fields ...huh.Field) 
 // sections is the whole conversation as the columns of one screen, in the order
 // they are read across.
 //
-// The two escape hatches come last and are hidden until a version select is left
-// on "type one myself", so they cost nothing on the screen until they are asked
-// for — and, being last, the numbered sections in front of them keep their
-// numbers when they appear.
+// The escape hatches come last and are hidden until a version select is left on
+// "type one myself", so they cost nothing on the screen until they are asked for
+// — and, being last, the numbered sections in front of them keep their numbers
+// when they appear.
 func newSections(
 	c *config.Config,
 	f *fields,
@@ -726,9 +929,28 @@ func newSections(
 	f.pkg = packageInput(c, options)
 	f.directory = directoryInput(c, options, true)
 	f.vaadin = versionSelect("Vaadin version", versionNote(available.Vaadin),
-		withFallback(available.Vaadin, c.VaadinVersion), &c.VaadinVersion)
-	f.boot = versionSelect("Spring Boot version", versionNote(available.Boot),
-		withFallback(available.Boot, c.BootVersion), &c.BootVersion)
+		withFallback(offer(available.Vaadin), c.VaadinVersion), &c.VaadinVersion)
+
+	// Built from whatever the Config holds now — the defaults, until the lookup
+	// lands — and re-derived by the screen as the answers above them change.
+	pinned := options.pinned(c.VaadinVersion)
+	bootList, bootOpen := bootChoices(options.Rules, c.VaadinVersion, available.Boot, pinned, c.BootVersion)
+	c.BootVersion = bootOpen
+	f.boot = huh.NewSelect[string]().
+		Title("Spring Boot version").
+		Description(versionNote(available.Boot)).
+		Value(&c.BootVersion).
+		Options(bootOptions(bootList, pinned, c.VaadinVersion)...)
+
+	javaList, javaOpen, javaNote := javaChoices(options.Rules, c.VaadinVersion, c.BootVersion, c.JavaVersion)
+	if javaOpen != "" {
+		c.JavaVersion = javaOpen
+	}
+	f.java = huh.NewSelect[string]().
+		Title("Java version").
+		Description(javaNote).
+		Value(&c.JavaVersion).
+		Options(javaOptions(options.Rules, withFallback(javaList, c.JavaVersion))...)
 
 	return []section{
 		newSection("Coordinates", "What this project is called to Maven.", nil,
@@ -743,7 +965,7 @@ func newSections(
 		newSection("Versions", "Newest first, from Maven Central.", nil,
 			f.vaadin,
 			f.boot,
-			javaVersionInput(c, options)),
+			f.java),
 
 		newSection(stackTitle, stackDescription, nil,
 			themeSelect(c),
@@ -775,11 +997,18 @@ func newSections(
 
 		newSection("Vaadin version", "Typed, not offered.",
 			func() bool { return c.VaadinVersion != custom },
-			typedVersionInput("Vaadin version", &typed.vaadin)),
+			typedVersionInput("Vaadin version", "A version Maven Central did not offer.",
+				&typed.vaadin, vaadinValidator(options.Rules))),
 
 		newSection("Spring Boot version", "Typed, not offered.",
 			func() bool { return c.BootVersion != custom },
-			typedVersionInput("Spring Boot version", &typed.boot)),
+			typedVersionInput("Spring Boot version", "A version Maven Central did not offer.",
+				&typed.boot, bootValidator(options.Rules, c, typed))),
+
+		newSection("Java version", "Typed, not offered.",
+			func() bool { return c.JavaVersion != custom },
+			typedVersionInput("Java version", "A JDK major the rules did not list.",
+				&typed.java, javaValidator(options.Rules, c, typed))),
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/binarycodes/vaadin-init/internal/compat"
 	"github.com/binarycodes/vaadin-init/internal/config"
 	"github.com/binarycodes/vaadin-init/internal/ui"
 	"github.com/binarycodes/vaadin-init/internal/versions"
@@ -32,7 +34,7 @@ func runScreen(c config.Config, lookup VersionSource, options Options) (Session,
 		return Session{Config: c}, ErrCancelled
 	}
 
-	s.typed.resolve(&c, s.newestVaadin, s.newestBoot)
+	s.typed.resolve(&c, s.newestVaadin, s.newestBoot, s.newestJava)
 	applyFeatures(&c, s.features)
 	return Session{Config: c, Written: s.phase == written}, nil
 }
@@ -57,10 +59,32 @@ type screen struct {
 	confirmed bool
 	typed     typedVersions
 
-	// The newest release of each, for a sentinel left behind by a select whose
-	// escape hatch was then not filled in.
+	// The answer each list opened on, for a sentinel left behind by a select
+	// whose escape hatch was then not filled in.
 	newestVaadin string
 	newestBoot   string
+	newestJava   string
+
+	// What the Boot and Java lists are derived from. The Boot list follows the
+	// Vaadin answer and the Java list follows both, the way the derived answers
+	// follow the coordinates — so each is re-derived when what it follows
+	// changes, and left alone otherwise.
+	rules     compat.Rules
+	available versions.Available
+	from      struct{ vaadin, boot string }
+
+	// The Java the defaults file named, which is where the Java list opens
+	// whenever the chosen pair allows it.
+	preferredJava string
+
+	// The Boot the defaults file named: the only Boot to offer when nothing was
+	// fetched and no pin is known.
+	fallbackBoot string
+
+	// The Boot each Vaadin release was built with, as the pin source answers —
+	// "" for not known — keyed by Vaadin version, so each is asked for once.
+	pin  PinSource
+	pins map[string]string
 
 	// What the screen is doing: asking the questions, writing what they came to,
 	// or showing what was written.
@@ -132,14 +156,24 @@ type writtenMsg struct {
 // lookup was started early in the first place.
 type versionsMsg versions.Available
 
+// pinMsg carries in the Boot a Vaadin release was built with. Asked for when the
+// Vaadin answer is known, and for the same reason not waited on.
+type pinMsg struct{ vaadin, boot string }
+
 func newScreen(c *config.Config, lookup VersionSource, options Options) *screen {
 	s := &screen{
-		c:            c,
-		features:     selectedFeatures(*c),
-		confirmed:    true,
-		newestVaadin: c.VaadinVersion,
-		newestBoot:   c.BootVersion,
-		lookup:       lookup,
+		c:             c,
+		features:      selectedFeatures(*c),
+		confirmed:     true,
+		newestVaadin:  c.VaadinVersion,
+		newestBoot:    c.BootVersion,
+		newestJava:    c.JavaVersion,
+		preferredJava: c.JavaVersion,
+		fallbackBoot:  c.BootVersion,
+		rules:         options.Rules,
+		pin:           options.Pinned,
+		pins:          map[string]string{},
+		lookup:        lookup,
 		// Trimmed of the blank lines it is printed with: in a screen of its own
 		// the banner is the top of the page, and a blank row above it is a row
 		// the questions do not get.
@@ -157,9 +191,14 @@ func newScreen(c *config.Config, lookup VersionSource, options Options) *screen 
 	s.derived.directory = c.OutputDir
 
 	// Built with no releases yet: the lists start as whatever the defaults file
-	// named, and are replaced when the lookup lands.
+	// named, and are replaced when the lookup lands. The pin is not asked for
+	// here either — newSections is given no pin source — because a blocking call
+	// before the screen is up is exactly the wait the lookup was moved off of.
+	options.Pinned = nil
 	sections := newSections(c, s.fields, &s.features, &s.confirmed, &s.typed,
 		versions.Available{}, options)
+	s.newestBoot, s.newestJava = c.BootVersion, c.JavaVersion
+	s.from.vaadin, s.from.boot = c.VaadinVersion, c.BootVersion
 
 	s.tiled = &tiled{sections: sections}
 
@@ -216,7 +255,16 @@ func (s *screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return s, s.relayout()
 
 	case versionsMsg:
-		s.offer(versions.Available(msg))
+		cmd := s.offer(versions.Available(msg))
+		return s, tea.Batch(cmd, s.relayout())
+
+	case pinMsg:
+		s.pins[msg.vaadin] = msg.boot
+		if msg.vaadin != s.c.VaadinVersion {
+			return s, nil
+		}
+		s.deriveBoot()
+		s.deriveJava()
 		return s, s.relayout()
 
 	case writtenMsg:
@@ -262,6 +310,7 @@ func (s *screen) pass(msg tea.Msg) tea.Cmd {
 		s.visited[field] = true
 	}
 	s.follow()
+	cmd = tea.Batch(cmd, s.derive())
 
 	if s.form.State != huh.StateNormal {
 		return s.finish()
@@ -290,7 +339,7 @@ func (s *screen) finish() tea.Cmd {
 	// The answers are only complete once the sentinels a select may have been
 	// left on are resolved, and the stack multi-select is written back.
 	c := *s.c
-	s.typed.resolve(&c, s.newestVaadin, s.newestBoot)
+	s.typed.resolve(&c, s.newestVaadin, s.newestBoot, s.newestJava)
 	applyFeatures(&c, s.features)
 
 	return func() tea.Msg {
@@ -376,24 +425,125 @@ func (s *screen) track(field *huh.Input, bound, derived *string, next string) {
 	field.Value(bound)
 }
 
-// offer replaces the version lists with what the lookup found.
-func (s *screen) offer(available versions.Available) {
-	s.newestVaadin = withFallback(available.Vaadin, s.newestVaadin)[0]
-	s.newestBoot = withFallback(available.Boot, s.newestBoot)[0]
+// offer replaces the Vaadin list with what the lookup found, and then derives
+// the two lists that follow it.
+func (s *screen) offer(available versions.Available) tea.Cmd {
+	s.available = available
+	vaadin := offer(available.Vaadin)
+	s.newestVaadin = withFallback(vaadin, s.newestVaadin)[0]
 
-	s.list(s.fields.vaadin, available.Vaadin, s.newestVaadin, &s.c.VaadinVersion)
-	s.list(s.fields.boot, available.Boot, s.newestBoot, &s.c.BootVersion)
+	if len(vaadin) > 0 && !s.visited[s.fields.vaadin] {
+		// The newest release is the answer being offered, so it is the one the
+		// cursor has to open on — and huh takes the cursor from the bound value.
+		s.c.VaadinVersion = s.newestVaadin
+		s.fields.vaadin.Options(versionOptions(vaadin)...)
+		s.fields.vaadin.Description(versionNote(vaadin))
+	}
+	// Derived even when the Vaadin answer did not move: the Boot list is now
+	// filtered from what was fetched rather than from the one fallback.
+	s.from.vaadin = ""
+	return s.derive()
 }
 
-func (s *screen) list(field *huh.Select[string], fetched []string, newest string, value *string) {
-	if len(fetched) == 0 || s.visited[field] {
+// derive re-derives the Boot list when the Vaadin answer has changed, and the
+// Java list when either answer above it has, and asks for the pin of a Vaadin
+// release not asked about before.
+func (s *screen) derive() tea.Cmd {
+	var cmd tea.Cmd
+	if s.c.VaadinVersion != s.from.vaadin {
+		s.from.vaadin = s.c.VaadinVersion
+		cmd = s.fetchPin(s.c.VaadinVersion)
+		s.deriveBoot()
+	}
+	if s.c.BootVersion != s.from.boot {
+		s.from.boot = s.c.BootVersion
+		s.deriveJava()
+	}
+	return cmd
+}
+
+// fetchPin asks the pin source, once per Vaadin release, from a command so the
+// screen never waits on it. A sentinel is not a release to ask about.
+func (s *screen) fetchPin(vaadin string) tea.Cmd {
+	if s.pin == nil || vaadin == custom {
+		return nil
+	}
+	if _, asked := s.pins[vaadin]; asked {
+		return nil
+	}
+	s.pins[vaadin] = ""
+	return func() tea.Msg { return pinMsg{vaadin, s.pin(vaadin)} }
+}
+
+// deriveBoot rebuilds the Boot list for the Vaadin answer.
+//
+// A choice already made in the list is kept if the new list still has it, and
+// the cursor is moved to where the list opens otherwise: the pinned release, or
+// the newest the rules allow. Choosing to type one is kept whatever the list.
+func (s *screen) deriveBoot() {
+	vaadin := s.c.VaadinVersion
+	if vaadin == custom {
 		return
 	}
-	// The newest release is the answer being offered, so it is the one the
-	// cursor has to open on — and huh takes the cursor from the bound value.
-	*value = newest
-	field.Options(versionOptions(fetched)...)
-	field.Description(versionNote(fetched))
+	pinned := s.pins[vaadin]
+	list, open := bootChoices(s.rules, vaadin, s.available.Boot, pinned, s.fallbackBoot)
+	s.newestBoot = open
+	s.keep(s.fields.boot, &s.c.BootVersion, list, open)
+	relist(s.fields.boot, &s.c.BootVersion, bootOptions(list, pinned, vaadin))
+	s.fields.boot.Description(versionNote(s.available.Boot))
+}
+
+// deriveJava rebuilds the Java list for the Vaadin and Boot answers, and the line
+// under it saying what bounds it. A pair the rules refuse — possible only when
+// the Boot is the offline fallback — leaves the list as it was and says why.
+func (s *screen) deriveJava() {
+	vaadin, boot := s.c.VaadinVersion, s.c.BootVersion
+	if vaadin == custom || boot == custom {
+		return
+	}
+	list, open, note := javaChoices(s.rules, vaadin, boot, s.preferredJava)
+	s.fields.java.Description(note)
+	if len(list) == 0 {
+		return
+	}
+	s.newestJava = open
+	s.keep(s.fields.java, &s.c.JavaVersion, list, open)
+	relist(s.fields.java, &s.c.JavaVersion, javaOptions(s.rules, list))
+}
+
+// keep decides where a re-derived list's cursor goes: on the choice already made
+// in it when that is still offered or is the escape hatch, and where the list
+// opens otherwise.
+func (s *screen) keep(field *huh.Select[string], value *string, list []string, open string) {
+	if *value == custom || (s.visited[field] && slices.Contains(list, *value)) {
+		return
+	}
+	*value = open
+}
+
+// relist replaces a select's options and puts its cursor on the bound value,
+// with every option still in view.
+//
+// huh takes the cursor from the bound value when the options are set, and scrolls
+// the list so that row is its first: a list opening on its third release shows
+// that release at the top and nothing of the two newer ones above it. Moving the
+// cursor with the key it would be moved with scrolls only when the cursor leaves
+// the view, and with every option in view it never does — so the list is set with
+// its first option bound, and the cursor walked down to the answer.
+func relist(field *huh.Select[string], value *string, options []huh.Option[string]) {
+	target := *value
+	*value = options[0].Value
+	field.Options(options...)
+	for _, option := range options {
+		if option.Value == target {
+			break
+		}
+		field.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if *value != target {
+		// Not on the list at all — nothing to walk to, so the first option it is.
+		*value = options[0].Value
+	}
 }
 
 // quitting is the reminder at the end of the command bar. It is the only way out

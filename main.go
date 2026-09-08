@@ -25,6 +25,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
+	"github.com/binarycodes/vaadin-init/internal/compat"
 	"github.com/binarycodes/vaadin-init/internal/config"
 	"github.com/binarycodes/vaadin-init/internal/generate"
 	"github.com/binarycodes/vaadin-init/internal/prompt"
@@ -46,6 +47,13 @@ var templateFS embed.FS
 //go:embed defaults.toml
 var defaultsTOML []byte
 
+// The rules for which Spring Boot and JDK go with a Vaadin release. A data file
+// rather than constants, so the day a new line needs a rule is a pull request
+// against the file and not a search through the code.
+//
+//go:embed compat.json
+var compatJSON []byte
+
 // version is stamped in at build time; see the Makefile.
 var version = "dev"
 
@@ -55,7 +63,7 @@ var version = "dev"
 const lookupTimeout = 5 * time.Second
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		if errors.Is(err, prompt.ErrCancelled) {
 			fmt.Fprintln(os.Stderr, ui.Cancelled())
 			os.Exit(130)
@@ -65,17 +73,18 @@ func main() {
 	}
 }
 
-func run() error {
+func run(args []string) error {
 	flags := flag.NewFlagSet("vaadin-init", flag.ContinueOnError)
 	flags.Usage = func() { usage(flags) }
 
 	defaultsPath := flags.String("defaults", "", "read defaults from this file instead of the per-user one")
+	compatPath := flags.String("compat", "", "read the version compatibility rules from this file instead of the per-user one")
 	showVersion := flags.Bool("version", false, "print the version of vaadin-init and exit")
 
 	// The defaults file has to be read before the other flags are defined,
 	// because it supplies their default values — which is also what makes the
 	// generated --help describe this machine's defaults rather than the tool's.
-	if err := preParse(flags, os.Args[1:]); err != nil {
+	if err := preParse(flags, args); err != nil {
 		return err
 	}
 	if *showVersion {
@@ -87,6 +96,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	rules, err := compat.Load(compatJSON, *compatPath)
+	if err != nil {
+		return err
+	}
 	cfg := defaults.ToConfig()
 
 	groupID := flags.String("group-id", cfg.GroupID, "Maven group id")
@@ -95,8 +108,8 @@ func run() error {
 	pkg := flags.String("package", cfg.Package, "base Java package (default: derived from the coordinates)")
 	description := flags.String("description", cfg.Description, "project description")
 	vaadinVersion := flags.String("vaadin-version", "", "Vaadin version (default: the newest release found on Maven Central)")
-	bootVersion := flags.String("boot-version", "", "Spring Boot version (default: the newest release found on Maven Central)")
-	javaVersion := flags.String("java-version", cfg.JavaVersion, "JDK major version the build pins")
+	bootVersion := flags.String("boot-version", "", "Spring Boot version (default: the release the Vaadin version was built with)")
+	javaVersion := flags.String("java-version", cfg.JavaVersion, "JDK major version the build pins (moved into range if the versions need it)")
 	theme := flags.String("theme", cfg.Theme, "Vaadin theme the project loads: aura or lumo")
 	outputDir := flags.String("dir", "", "where to write the project (default: the artifact id)")
 	appPort := flags.Int("app-port", cfg.AppPort, "port the application listens on")
@@ -118,7 +131,7 @@ func run() error {
 	dryRun := flags.Bool("dry-run", false, "list the files that would be written, and write nothing")
 	accessible := flags.Bool("accessible", os.Getenv("ACCESSIBLE") != "", "ask the questions as plain sequential prompts, for screen readers")
 
-	if err := flags.Parse(os.Args[1:]); err != nil {
+	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -129,7 +142,9 @@ func run() error {
 	}
 
 	// Start the lookup now so it overlaps with the questions.
-	lookup := startLookup()
+	client := &http.Client{Timeout: lookupTimeout}
+	lookup := startLookup(client, rules)
+	pin := pinSource(client)
 
 	cfg.GroupID = *groupID
 	cfg.ArtifactID = *artifactID
@@ -214,9 +229,11 @@ func run() error {
 		// does. Not in accessible mode: a rule drawn down the left of two lines is
 		// decoration, and a screen reader has to read it out before reaching the
 		// first question.
+		options.Rules, options.Pinned = rules, pin
 		if !*accessible {
+			vaadinLines, bootLines := rules.Supported()
 			options.Banner = ui.Banner(version,
-				strconv.Itoa(versions.VaadinMajor), strconv.Itoa(versions.BootMajor))
+				strings.Join(vaadinLines, " or "), strings.Join(bootLines, " or "))
 
 			// The screen writes the project itself, so that what was written is
 			// reported on the screen it was asked for on. Not for a dry run, which
@@ -227,7 +244,7 @@ func run() error {
 					return streamTask(ctx, result.Root, task, out)
 				}
 				options.Generate = func(answers config.Config) (prompt.Outcome, error) {
-					if err := answers.Validate(); err != nil {
+					if err := answers.Validate(rules); err != nil {
 						return prompt.Outcome{}, err
 					}
 					written, err := generator.Write(answers, writeOptions)
@@ -235,7 +252,9 @@ func run() error {
 						return prompt.Outcome{}, err
 					}
 					cfg, result = answers, written
-					return outcome(answers, written), nil
+					// The pin was fetched when the Vaadin answer was chosen, so
+					// this is a lookup in a map, not on the network.
+					return outcome(answers, written, pin(answers.VaadinVersion) == answers.BootVersion), nil
 				}
 			}
 		}
@@ -246,22 +265,33 @@ func run() error {
 		}
 		cfg = session.Config
 	} else {
-		// Outside the TUI the lookup still supplies the version defaults, so a
-		// scripted run and an interactive one start from the same numbers.
-		available := lookup()
-		if !set["vaadin-version"] {
-			if latest := versions.Latest(available.Vaadin); latest != "" {
-				cfg.VaadinVersion = latest
+		// Outside the TUI the versions are derived the way the screen derives
+		// them — the newest Vaadin, the Boot it was built with, a Java both
+		// allow — so a scripted run and an interactive one come to the same
+		// numbers. A version that was typed is used as typed, and refused below
+		// if the three do not go together.
+		//
+		// Nothing is fetched when every version was typed: a fully pinned run
+		// needs no network, and should not wait on one.
+		if !set["vaadin-version"] || !set["boot-version"] || !set["java-version"] {
+			available := lookup()
+			if !set["vaadin-version"] {
+				if latest := versions.Latest(available.Vaadin); latest != "" {
+					cfg.VaadinVersion = latest
+				}
 			}
-		}
-		if !set["boot-version"] {
-			if latest := versions.Latest(available.Boot); latest != "" {
-				cfg.BootVersion = latest
+			if !set["boot-version"] {
+				if boot := rules.BootDefault(cfg.VaadinVersion, pin(cfg.VaadinVersion), available.Boot); boot != "" {
+					cfg.BootVersion = boot
+				}
+			}
+			if !set["java-version"] {
+				cfg.JavaVersion = javaDefault(rules, cfg)
 			}
 		}
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(rules); err != nil {
 		return err
 	}
 
@@ -284,7 +314,12 @@ func run() error {
 		// program that prints its summary on the way out leaves the terminal
 		// holding a copy of what the user has just finished reading, under the
 		// command they typed to start it.
-		printOutcome(outcome(cfg, result))
+		//
+		// Whether the Boot is the one the Vaadin was built with is asked only
+		// when it was derived: a typed pair has had no pin fetched for it, and
+		// a summary is not worth a network request.
+		builtWith := !set["boot-version"] && pin(cfg.VaadinVersion) == cfg.BootVersion
+		printOutcome(outcome(cfg, result, builtWith))
 
 		if interactive {
 			task, err = prompt.Task(prompt.Options{Accessible: *accessible})
@@ -371,14 +406,17 @@ func setFlags(flags *flag.FlagSet) map[string]bool {
 // startLookup runs the version lookup in the background and returns the function
 // that waits for it. The lookup happens once however many times that function is
 // called, so the interactive and scripted paths can both just ask.
-func startLookup() prompt.VersionSource {
-	client := &http.Client{Timeout: lookupTimeout}
+//
+// Only the lines the rules mark supported are fetched: the lines this tool has
+// templates for, which is what the two constants this replaces used to say.
+func startLookup(client *http.Client, rules compat.Rules) prompt.VersionSource {
 	done := make(chan versions.Available, 1)
+	vaadin, boot := rules.Supported()
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
 		defer cancel()
-		done <- versions.Lookup(ctx, client)
+		done <- versions.Lookup(ctx, client, versions.Lines{Vaadin: vaadin, Boot: boot})
 	}()
 
 	var once sync.Once
@@ -387,6 +425,43 @@ func startLookup() prompt.VersionSource {
 		once.Do(func() { available = <-done })
 		return available
 	}
+}
+
+// pinSource answers which Spring Boot a Vaadin release was built with, asking
+// Maven Central once per release and remembering the answer — "" included, since
+// a release with no starter pom will not grow one during this run.
+//
+// The same timeout and the same contract as the lookup: it fires once the Vaadin
+// answer is known, and when it does not work out the rules choose the Boot.
+func pinSource(client *http.Client) prompt.PinSource {
+	var mu sync.Mutex
+	pins := map[string]string{}
+	return func(vaadin string) string {
+		mu.Lock()
+		defer mu.Unlock()
+		if pinned, asked := pins[vaadin]; asked {
+			return pinned
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
+		defer cancel()
+		pinned, _ := versions.PinnedBoot(ctx, client, vaadin)
+		pins[vaadin] = pinned
+		return pinned
+	}
+}
+
+// javaDefault is the Java a scripted run pins when none was typed: the defaults
+// file's when the chosen Vaadin and Boot allow it, the newest LTS they do allow
+// otherwise — the rule the screen's Java list opens by. A pair the rules refuse
+// keeps the default, and is refused as a pair by Validate.
+func javaDefault(rules compat.Rules, cfg config.Config) string {
+	floor, ceiling, err := rules.JavaRange(cfg.VaadinVersion, cfg.BootVersion)
+	if err != nil {
+		return cfg.JavaVersion
+	}
+	preferred, _ := strconv.Atoi(cfg.JavaVersion)
+	java, _ := rules.JavaDefault(floor, ceiling, preferred)
+	return strconv.Itoa(java)
 }
 
 func printDryRun(generator *generate.Generator, cfg config.Config) error {
@@ -433,7 +508,11 @@ func displayPath(path string) string {
 //
 // Built apart from being printed because it is now said twice: once by the screen
 // the project was asked for on, and once into the scrollback that outlives it.
-func outcome(cfg config.Config, result generate.Result) prompt.Outcome {
+//
+// builtWith says the Boot is the release the Vaadin was built with, which is
+// worth a line under the stack: it is the one fact about the pair that was
+// looked up rather than chosen, and the reason the Boot is not the newest.
+func outcome(cfg config.Config, result generate.Result, builtWith bool) prompt.Outcome {
 	options := "none — core only"
 	if on := cfg.Selected(); len(on) > 0 {
 		options = ui.Join(on...)
@@ -468,15 +547,21 @@ func outcome(cfg config.Config, result generate.Result) prompt.Outcome {
 	}
 	steps = append(steps, ui.Step{Command: "./run.sh help", Purpose: "every task"})
 
+	stack := ui.Join(
+		"Vaadin "+cfg.VaadinVersion,
+		"Spring Boot "+cfg.BootVersion,
+		"Java "+cfg.JavaVersion,
+		cfg.ThemeName())
+	if builtWith {
+		stack += fmt.Sprintf("\nSpring Boot %s is the release Vaadin %s was built with",
+			cfg.BootVersion, cfg.VaadinVersion)
+	}
+
 	return prompt.Outcome{
 		Title: cfg.ProjectName + " is ready",
 		Rows: []ui.Row{
 			{Label: "where", Value: fmt.Sprintf("%s  (%d files)", displayPath(result.Root), len(result.Paths))},
-			{Label: "stack", Value: ui.Join(
-				"Vaadin "+cfg.VaadinVersion,
-				"Spring Boot "+cfg.BootVersion,
-				"Java "+cfg.JavaVersion,
-				cfg.ThemeName())},
+			{Label: "stack", Value: stack},
 			{Label: "options", Value: options},
 			{Label: "ports", Value: ui.Join(ports(cfg)...)},
 			{Label: "git", Value: git},

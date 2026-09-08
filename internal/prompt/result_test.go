@@ -29,9 +29,11 @@ func generatedWith(t *testing.T, generate func(config.Config) (Outcome, error),
 	t.Helper()
 
 	c := seed()
-	s := newScreen(&c, offered(), Options{Banner: banner, Generate: generate, Task: runner})
+	options := screenOptions()
+	options.Generate, options.Task = generate, runner
+	s := newScreen(&c, lookedUp(), options)
 	s.Init()
-	s.Update(versionsMsg(fetched()))
+	land(s)
 	s.Update(tea.WindowSizeMsg{Width: wide, Height: tall})
 
 	press(s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}, Alt: true})
