@@ -5,20 +5,31 @@
 // a project behind is worse than one that refuses: the user cannot tell what is
 // missing, and the obvious recovery — run it again — is the one thing the
 // half-written directory now blocks.
+//
+// The templates are kept one directory per Vaadin version floor — templates/24,
+// templates/25, templates/25.2 — each holding only the files that differ from
+// the floors below it. A project for version X is rendered through every
+// directory whose floor is at or below X, newest first, so the closest set wins
+// and a higher one is never consulted. What a starter project contains changes at
+// a major and now and then at a minor, and a directory per change is what keeps
+// that out of the templates as conditionals.
 package generate
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"text/template"
 
 	"github.com/binarycodes/vaadin-init/internal/config"
+	"github.com/binarycodes/vaadin-init/internal/version"
 )
 
 // file is one template and where it lands.
@@ -95,13 +106,90 @@ var manifest = []file{
 	{src: "java/ProtectedRootIT.java.tmpl", dst: "src/test/java/{{.PackagePath}}/ProtectedRootIT.java", when: protectedRoot},
 }
 
+// atLeast reports whether the project's Vaadin is the given version or newer,
+// for a manifest entry one line has and another does not. Presence is the
+// manifest's to decide, so a file dropped in a later line is a predicate here
+// and not a tombstone in the later directory.
+func atLeast(vaadin string) func(config.Config) bool {
+	return func(c config.Config) bool { return version.Compare(c.VaadinVersion, vaadin) >= 0 }
+}
+
+// layer is one template directory: its name, and the version it is true from.
+type layer struct {
+	name  string
+	floor version.Version
+}
+
 // Generator renders the manifest from a template filesystem.
 type Generator struct {
 	templates fs.FS
+
+	// The version directories, newest floor first.
+	layers []layer
 }
 
-func New(templates fs.FS) *Generator {
-	return &Generator{templates: templates}
+// New reads the template root. Every entry there is a version directory; a name
+// that is not a version floor, or a file at the top, is an error naming it. An
+// embedded tree is fixed at build time, so this is a build-time assertion with a
+// runtime signature.
+func New(templates fs.FS) (*Generator, error) {
+	entries, err := fs.ReadDir(templates, ".")
+	if err != nil {
+		return nil, fmt.Errorf("reading the template root: %w", err)
+	}
+	g := &Generator{templates: templates}
+	for _, entry := range entries {
+		floor, ok := version.ParseFloor(entry.Name())
+		if !entry.IsDir() || !ok {
+			return nil, fmt.Errorf("templates/%s: every entry at the top of the template tree is a directory named by the Vaadin version it is true from, like 25 or 25.2", entry.Name())
+		}
+		g.layers = append(g.layers, layer{name: entry.Name(), floor: floor})
+	}
+	if len(g.layers) == 0 {
+		return nil, errors.New("the template tree has no version directories")
+	}
+	sort.Slice(g.layers, func(i, j int) bool { return g.layers[i].floor.After(g.layers[j].floor) })
+	return g, nil
+}
+
+// Layers lists the directories consulted for a Vaadin version, newest floor
+// first: every directory whose floor is at or below it.
+//
+// An empty chain is an error naming the oldest floor there is, not a fall-back
+// to it: the case only arises when the rules and the tree disagree — a --compat
+// override marking a line supported that this binary has no templates for — and
+// a project rendered from another line's templates is exactly what a version
+// check exists to stop.
+func (g *Generator) Layers(vaadin string) ([]string, error) {
+	v, ok := version.Parse(vaadin)
+	if !ok {
+		return nil, fmt.Errorf("%q is not a Vaadin version", vaadin)
+	}
+	var chain []string
+	for _, l := range g.layers {
+		if !l.floor.After(v) {
+			chain = append(chain, l.name)
+		}
+	}
+	if len(chain) == 0 {
+		return nil, fmt.Errorf("no templates for Vaadin %s: the oldest set is for %s", vaadin, g.layers[len(g.layers)-1].name)
+	}
+	return chain, nil
+}
+
+// open reads a template from the first layer that has it, and says which.
+func (g *Generator) open(chain []string, src string) (body []byte, from string, err error) {
+	for _, l := range chain {
+		from = path.Join(l, src)
+		body, err = fs.ReadFile(g.templates, from)
+		if err == nil {
+			return body, from, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, "", fmt.Errorf("reading template %s: %w", from, err)
+		}
+	}
+	return nil, "", fmt.Errorf("no template %s in any of %s", src, strings.Join(chain, ", "))
 }
 
 // File is one finished file waiting to be written.
@@ -109,24 +197,32 @@ type File struct {
 	Path string
 	Mode os.FileMode
 	Body []byte
+
+	// Source is the template it came from, layer included: 25.2/pom.xml.tmpl.
+	Source string
 }
 
 // Render produces the whole tree in memory. Paths are relative to the project
 // root and use forward slashes, as they do in the manifest; they become
 // platform paths only at the moment they are written.
 func (g *Generator) Render(c config.Config) ([]File, error) {
+	chain, err := g.Layers(c.VaadinVersion)
+	if err != nil {
+		return nil, err
+	}
+
 	var out []File
 	for _, f := range manifest {
 		if f.when != nil && !f.when(c) {
 			continue
 		}
 
-		body, err := fs.ReadFile(g.templates, f.src)
+		body, source, err := g.open(chain, f.src)
 		if err != nil {
-			return nil, fmt.Errorf("reading template %s: %w", f.src, err)
+			return nil, err
 		}
 
-		path, err := renderString("path:"+f.src, f.dst, c)
+		dst, err := renderString("path:"+f.src, f.dst, c)
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +238,7 @@ func (g *Generator) Render(c config.Config) ([]File, error) {
 		if mode == 0 {
 			mode = fileMode
 		}
-		out = append(out, File{Path: path, Mode: mode, Body: body})
+		out = append(out, File{Path: dst, Mode: mode, Body: body, Source: source})
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })

@@ -41,6 +41,25 @@ func Parse(raw string) (Version, bool) {
 	}, true
 }
 
+// ParseFloor reads a version prefix — "25", "25.2", "25.2.3" — as the lowest
+// version it names, so that a template directory called 25.2 sorts after 25.1.9
+// and before 25.2.6. Qualifiers are refused: a floor is a number.
+func ParseFloor(name string) (Version, bool) {
+	parts := strings.Split(strings.TrimSpace(name), ".")
+	if len(parts) == 0 || len(parts) > 3 {
+		return Version{}, false
+	}
+	numbers := make([]int, 3)
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 || part != strconv.Itoa(n) {
+			return Version{}, false
+		}
+		numbers[i] = n
+	}
+	return Version{Raw: name, Major: numbers[0], Minor: numbers[1], Patch: numbers[2]}, true
+}
+
 // Stable reports whether this is a release rather than an alpha, beta or
 // release candidate.
 func (v Version) Stable() bool { return v.Qualifier == "" }

@@ -30,6 +30,7 @@ import (
 	"github.com/binarycodes/vaadin-init/internal/generate"
 	"github.com/binarycodes/vaadin-init/internal/prompt"
 	"github.com/binarycodes/vaadin-init/internal/ui"
+	ver "github.com/binarycodes/vaadin-init/internal/version"
 	"github.com/binarycodes/vaadin-init/internal/versions"
 )
 
@@ -186,7 +187,10 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	generator := generate.New(templates)
+	generator, err := generate.New(templates)
+	if err != nil {
+		return err
+	}
 	writeOptions := generate.WriteOptions{
 		Force:  *force,
 		Git:    !*noGit,
@@ -274,11 +278,22 @@ func run(args []string) error {
 		// Nothing is fetched when every version was typed: a fully pinned run
 		// needs no network, and should not wait on one. The theme then stays as
 		// the defaults file or the flag named it, and Validate has the last word.
-		if !set["vaadin-version"] || !set["boot-version"] || !set["java-version"] {
+		line := set["vaadin-version"] && isLine(cfg.VaadinVersion)
+		if !set["vaadin-version"] || line || !set["boot-version"] || !set["java-version"] {
 			available := lookup()
 			if !set["vaadin-version"] {
 				if latest := versions.Latest(available.Vaadin); latest != "" {
 					cfg.VaadinVersion = latest
+				}
+			}
+			if line {
+				// A bare line — `--vaadin-version 25` — is the newest release in
+				// it, the way no flag is the newest overall: a line is what a
+				// person typing one means, and a release number written into a
+				// script or a workflow is a number that goes stale there.
+				cfg.VaadinVersion, err = newestInLine(cfg.VaadinVersion, available.Vaadin)
+				if err != nil {
+					return err
 				}
 			}
 			if !set["boot-version"] {
@@ -456,6 +471,23 @@ func pinSource(client *http.Client) prompt.PinSource {
 	}
 }
 
+// isLine reports whether a typed Vaadin version names a line — 25, or 25.2 —
+// rather than a release, which has three numbers.
+func isLine(s string) bool {
+	_, ok := ver.ParseFloor(s)
+	return ok && strings.Count(s, ".") < 2
+}
+
+// newestInLine resolves a line to the newest release the lookup found in it.
+func newestInLine(line string, releases []string) (string, error) {
+	for _, release := range releases { // newest first
+		if v, ok := ver.Parse(release); ok && v.InLine(line) {
+			return release, nil
+		}
+	}
+	return "", fmt.Errorf("vaadin version: no release of Vaadin %s was found on Maven Central among the lines this tool generates", line)
+}
+
 // javaDefault is the Java a scripted run pins when none was typed: the defaults
 // file's when the chosen Vaadin and Boot allow it, the newest LTS they do allow
 // otherwise — the rule the screen's Java list opens by. A pair the rules refuse
@@ -485,8 +517,16 @@ func printDryRun(generator *generate.Generator, cfg config.Config) error {
 		paths = append(paths, f.Path)
 	}
 
+	// Which template directories the project came through, newest first, so
+	// "which pom did I get" is answered without opening three files.
+	layers, err := generator.Layers(cfg.VaadinVersion)
+	if err != nil {
+		return err
+	}
+
 	fmt.Println()
 	fmt.Printf("  %s\n", ui.Heading(fmt.Sprintf("%d files would be written", len(files))))
+	fmt.Printf("  templates %s\n", strings.Join(layers, " → "))
 	fmt.Println()
 	fmt.Println(ui.FileTree(root, paths))
 	return nil
