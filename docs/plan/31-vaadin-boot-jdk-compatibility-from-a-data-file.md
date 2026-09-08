@@ -264,8 +264,7 @@ above, and why:
 
 - **The Java list is the LTS releases in the range and the newest release in
   it**, not every major — `21 · LTS`, `25 · LTS`, `26` for 25.2.6 on 4.1.0 — with
-  the rest behind the same "type one myself" hatch and accepted by the rules.
-  Two reasons. A feature release older than the newest is out of support the day
+  the rest reachable by `--java-version` and accepted by the rules. Two reasons. A feature release older than the newest is out of support the day
   the next one ships, so a list of 22, 23 and 24 is a list of JDKs nobody should
   start a project on; and six rows plus a two-line description is what pushed the
   Versions column past a terminal that tiled. start.vaadin.com's own Java list is
@@ -297,6 +296,15 @@ above, and why:
   `prompt.Options`, beside the pin source.
 - The version parse moved to `internal/version`, since `internal/versions`
   cannot import the rules that need it and the rules cannot import the lookup.
+- **The "type one myself" escape hatch is gone**, on request, from all three
+  version lists: nothing can be typed into the screen, so nothing the rules have
+  not seen can be chosen there, and the version flags are the way to a release the
+  lookup did not offer. Accessible mode keeps its inputs — there the input is the
+  question — validated against the rules at the field.
+- **Themes are in the rules too**, on request: each Vaadin line lists the themes
+  it ships, default first (`["aura", "lumo"]` for 25, `["lumo"]` for 24), the
+  theme list follows the Vaadin answer the way the Boot list does, and `Check`
+  refuses a theme the line does not ship.
 
 ## Test
 

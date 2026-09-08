@@ -171,11 +171,15 @@ changes. `--defaults <path>` overrides both.
 The three versions are also checked against each other. `compat.json`, embedded
 beside `defaults.toml`, holds the rules: which Spring Boot line and minimum each
 Vaadin line needs, which JDKs each Boot line runs on, and which Java releases are
-LTS. The Boot list is filtered by them and opens on the release the chosen Vaadin
-was built with, read from its starter pom on Maven Central; the Java list holds
-the LTS releases and the newest release in the range both allow, with anything
-else one "type one myself" away; and a set that does not go together is refused —
-at the field in the TUI, and before anything is written from a script:
+LTS, and which themes each Vaadin line ships. Every list on the screen is derived
+from the answers above it: the Boot list is filtered to what the chosen Vaadin
+accepts and opens on the release it was built with, read from its starter pom on
+Maven Central; the Java list holds the LTS releases and the newest release in the
+range both allow; the theme list holds the themes that Vaadin ships (Aura from
+25). Changing an answer replaces the lists under it, so a set that does not go
+together cannot be chosen on the screen. Nothing can be typed into a version list
+either — a release the lookup did not offer is what `--vaadin-version` and its
+siblings are for, and a set given that way is refused before anything is written:
 
 ```
 ✗ spring boot version: Vaadin 25.2.6 needs Spring Boot 4.1.0 or newer; got 4.0.8

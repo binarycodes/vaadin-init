@@ -92,8 +92,10 @@ from comparing values.
 the TUI and in `--yes` alike: Vaadin is the newest release the lookup found;
 Spring Boot is the release that Vaadin was built with (§5.6) when the rules allow
 it, otherwise the newest release they allow; Java is the defaults file's when the
-pair allows it, otherwise the newest LTS release the pair allows. A `--yes` run
-with all three typed fetches nothing.
+pair allows it, otherwise the newest LTS release the pair allows; the theme is the
+defaults file's when the Vaadin line ships it, otherwise the line's own default.
+A `--yes` run with all three versions typed fetches nothing, and the theme then
+stays as named.
 
 2.7 `--author-name` and `--author-email` are for a machine whose git has no
 identity to commit with. Given, they are written to the new repository's own
@@ -166,8 +168,10 @@ replaces the embedded entry with the same `line` and other entries are kept, and
   "vaadin": [
     { "line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "4.0.0",
       "since": [ { "vaadin": "25.1.0", "boot_min": "4.0.4" }, { "vaadin": "25.2.0", "boot_min": "4.1.0" } ],
+      "themes": ["aura", "lumo"],
       "source": "https://github.com/vaadin/platform/releases/tag/25.2.0" },
     { "line": "24", "supported": false, "java_min": 17, "boot_line": "3", "boot_min": "3.5.0",
+      "themes": ["lumo"],
       "source": "https://vaadin.com/docs/v24/compatibility" }
   ],
   "boot": [
@@ -180,11 +184,13 @@ replaces the embedded entry with the same `line` and other entries are kept, and
 ```
 
 `supported` marks the lines this tool has templates for. `since` tightens
-`boot_min` from a Vaadin release onwards. `java_max` is inclusive. A `$comment`
-key carries the editing procedure. A file is decoded strictly — an unknown key is
-an error — and every entry is checked: lines look like `25` or `4.1`, `boot_min`
-and each `since` are versions inside their line, Java ranges are ranges, `eol` is
-a date, no line is listed twice, `lts` is not empty. Each message names the entry.
+`boot_min` from a Vaadin release onwards. `themes` lists the themes the line
+ships, its default first. `java_max` is inclusive. A `$comment` key carries the
+editing procedure. A file is decoded strictly — an unknown key is an error — and
+every entry is checked: lines look like `25` or `4.1`, `boot_min` and each
+`since` are versions inside their line, `themes` is not empty, Java ranges are
+ranges, `eol` is a date, no line is listed twice, `lts` is not empty. Each
+message names the entry.
 
 ## 4. The answers
 
@@ -251,6 +257,7 @@ longest `line` it is in. In order:
 | the Boot is at least `boot_min`, with every `since` at or below the Vaadin applied | `spring boot version: Vaadin 25.2.6 needs Spring Boot 4.1.0 or newer; got 4.0.8` |
 | Java is at least the Vaadin line's `java_min` | `java version: Vaadin 25 needs Java 21 or newer; got 17` |
 | Java is within the Boot line's range, when that line has a rule | `java version: Spring Boot 4.1 supports Java up to 26; got 27` |
+| the theme is one the Vaadin line ships | `theme: Vaadin 25 ships aura and lumo, not material` |
 
 Each message ends with the rule's `source` on a second line, in parentheses. A
 Boot minor with no rule has no Java ceiling: nobody has written one down, and the
@@ -259,8 +266,10 @@ check in §11.4 is what notices.
 The same rules give the derivations: `BootDefault` (the pin if the rules allow
 it, else the newest allowed candidate, else nothing), `JavaRange` (the higher of
 the two floors, up to the Boot ceiling), `JavaDefault` (the preferred release if
-in range, else the newest LTS in range, else the floor) and `Describe` (*21 or
-newer for Vaadin 25, up to 26 for Spring Boot 4.1.*).
+in range, else the newest LTS in range, else the floor), `Describe` (*21 or
+newer for Vaadin 25, up to 26 for Spring Boot 4.1.*), `Themes` (the line's
+themes, default first) and `ThemeDefault` (the preferred theme if the line ships
+it, else the line's default).
 
 ## 5. Version lookup
 
@@ -327,17 +336,15 @@ mode.
 | 1 | Coordinates | What this project is called to Maven. | Group ID, Artifact ID |
 | 2 | Identity | What this project is called to people. | Project name, Description, Base package |
 | 3 | Versions | Newest first, from Maven Central. | Vaadin version, Spring Boot version, Java version — three selects (§6.6) |
-| 4 | Stack | The core is always generated. Choose its theme, and the rest. | Theme (a select: Aura, Lumo; described *Aura is the Vaadin 25 default.*), then Features (one multi-select of five options) |
+| 4 | Stack | The core is always generated. Choose its theme, and the rest. | Theme (a select of the themes the chosen Vaadin ships, the line's default first, described *Aura is the Vaadin 25 default.* — §6.6.8), then Features (one multi-select of five options) |
 | — | Author | Git has no identity for the first commit. Kept in this repository only; git config --global sets one everywhere. | Name (inline), Email (inline) — a `span` row above Output, only when `Options.AskAuthor` (§6.2.6) |
 | 5 | Output | Created if it does not exist. Must be empty. | Directory (inline), Generate |
 
-6.2.2 Three further sections are hidden unless a version select was left on the
-"type one myself…" sentinel: `Vaadin version` and `Spring Boot version`, each a
-single input described as *A version Maven Central did not offer*, and `Java
-version`, described as *A JDK major the rules did not list*. Each is validated at
-the field against the rules (§4.5) as well as its shape — the Boot against the
-Vaadin as answered so far, the Java against both — so a version from the wrong
-line is refused where it can still be changed.
+6.2.2 No version can be typed on the screen. Each version list offers what the
+lookup found and the rules allow, and nothing else; a release the lookup did not
+offer is what `--vaadin-version`, `--boot-version` and `--java-version` are for,
+and a set given that way is checked by `Validate` (§4.5) before anything is
+written.
 
 6.2.3 The stack options, in declaration order, each mapping to one `Config` flag:
 
@@ -451,13 +458,13 @@ focused, in which case it is left alone.
 built-in default and says so: *Maven Central could not be reached — this is the
 built-in default, which may be out of date.*
 
-6.6.4 Each select ends with `type one myself…`, bound to a sentinel that is not
-the empty string and not a shape `ValidVersion` accepts. A sentinel that survives
-with nothing typed falls back to the answer the list opened on.
+6.6.4 The Boot and theme lists follow the Vaadin answer and the Java list follows
+both versions, the way the derived answers follow the coordinates: each is
+re-derived when what it follows changes, and left alone otherwise. Nothing on the
+screen can be chosen from a list that was not derived for the answers above it,
+so a set the rules refuse cannot be assembled there.
 
-6.6.5 The Boot list follows the Vaadin answer and the Java list follows both, the
-way the derived answers follow the coordinates: each is re-derived when what it
-follows changes, and left alone otherwise. The Boot list is the fetched releases
+6.6.5 The Boot list is The Boot list is the fetched releases
 the rules allow for the Vaadin, newest first, at most `offered` of them, plus the
 release the Vaadin was built with if it is not among them, labelled `4.1.0 · built
 with 25.2.6`. It opens on that release, or on the newest allowed. The pin is asked
@@ -474,15 +481,21 @@ the offline fallback — leaves the list as it was and puts the refusal in the
 description.
 
 6.6.7 A re-derived list keeps a choice already made in it when the new list still
-offers it, or when it is the sentinel; otherwise the cursor moves to where the
-list opens. The list is set with its first option bound and the cursor then
+offers it; otherwise the cursor moves to where the list opens. The list is set with its first option bound and the cursor then
 walked down to the answer, because huh scrolls a list so that the bound value is
 its first row, which hides the newer releases above the pin.
+
+6.6.8 The theme list holds the themes the chosen Vaadin's line ships, in the
+rules' order, named for a person (`Aura`, `Lumo`), described *<default> is the
+Vaadin <line> default.* It opens on the defaults file's theme when the line ships
+it, and on the line's own default otherwise. The select validates its answer
+against the Vaadin as answered, for accessible mode, where the list is built
+before the Vaadin is typed.
 
 ### 6.7 After Generate
 
 6.7.1 Pressing Generate does not end the screen. The screen calls the injected
-`Options.Generate` with the completed answers (sentinels resolved, stack applied),
+`Options.Generate` with the completed answers (stack applied),
 shows the `Writing` box while it runs, and then the result.
 
 6.7.2 A generation failure ends the screen and is returned to `main`, which prints
@@ -884,8 +897,9 @@ list opens on the newest release and the Boot list on the release it was built
 with, labelled, with the newer releases still in view; that the Boot list follows
 the Vaadin answer and keeps a choice while it is still allowed; that the Java list
 holds the LTS releases and the newest in range, opens on the default or snaps to
-the newest LTS and says so; that a typed Java is checked against the pair; that
-the escape hatch appears when a version is typed; that the author section is a row above the output only when it is asked for, and that
+the newest LTS and says so; that the theme list follows the Vaadin, offering only
+what the line ships and naming its default; that no version list offers typing
+and no section is hidden; that the author section is a row above the output only when it is asked for, and that
 its questions are asked in accessible mode, refuse an empty answer with nothing
 offered, and keep an offered half; that the output section is the only one with a row of its own and is drawn
 to the whole width; that generating is one button and the bar advertises no key
@@ -897,11 +911,18 @@ In accessible mode: that the derived Boot is the pin and the derived Java the
 default, that a Vaadin, Boot or Java refused by the rules is asked again at its
 field, and that an out-of-range Java default snaps.
 
+An empty `compat.Rules` refuses every theme, and huh's accessible select re-asks a
+refused answer until one is accepted — with the input exhausted, forever. Every
+test conversation therefore starts from `conversation()`, which carries the
+shipped rules.
+
 13.4 `internal/compat` table-tests the rules over the shipped file: an
 unsupported line is refused naming its Boot line and source, `since` tightens the
 Boot minimum per release, `CompatibleBoot` keeps the line and the minimum,
 `JavaRange` refuses the pair before Java and has no ceiling for an unruled Boot
-minor, `java_max` is inclusive, `BootDefault` prefers a pin the rules allow, an
+minor, `java_max` is inclusive, `BootDefault` prefers a pin the rules allow, a
+theme the line does not ship is refused and `ThemeDefault` falls back to the
+line's own, an
 override wins per line and leaves the other lines alone, and a malformed file is
 refused naming the entry. `internal/config` checks `Validate` accepts 25.2.6 with
 4.1.0 on 21 and 25 and refuses 4.0.8, Java 17 and 27, and 24.10.9, each with the
