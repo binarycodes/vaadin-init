@@ -46,6 +46,7 @@ implemented; a file is a proposal, not a record.
 | 28 | [No way back, no way to replay](28-there-is-no-way-back-and-no-way-to-replay.md) | A wrong group id means starting over, and a good run leaves no record of itself. |
 | 29 | [A half-written project blocks its own retry](29-a-half-written-project-blocks-its-own-retry.md) | Rendering is atomic; writing is not, which is the case the package comment warns about. |
 | 31 | [Vaadin → Spring Boot → JDK from a data file](31-vaadin-boot-jdk-compatibility-from-a-data-file.md) | Three versions asked as three unrelated answers; the rules that tie them live nowhere. start.vaadin.com hard-codes them and rebuilds. |
+| 32 | [One template tree per Vaadin line](32-vaadin-version-specific-templates.md) | `compat.json` says a line is supported when templates exist for it, and the tree has room for exactly one. |
 
 ## The repository
 
