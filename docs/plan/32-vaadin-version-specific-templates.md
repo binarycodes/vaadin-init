@@ -239,6 +239,18 @@ identical. Then 5. Then the test and CI changes below, which are what make a
 second line safe to add. Nothing here adds a line; it makes adding one a
 directory and a flag.
 
+## As built
+
+Done as written, with one directory — `templates/25/` — since one line is
+supported. Two notes:
+
+- `--vaadin-version` takes a line as anything with fewer than three numbers, so
+  `25.2` is a line too (the newest 25.2.x), not a release: there is no Vaadin
+  release with two numbers, and a person typing one means the minor.
+- `atLeast` is in the generator, unused, for the day a manifest entry belongs to
+  one line and not another. It is a predicate like `database`, so it costs
+  nothing to keep and saves someone inventing a tombstone.
+
 ## Test
 
 - `internal/version`: `ParseFloor("25")` is 25.0.0, `("25.2")` is 25.2.0,

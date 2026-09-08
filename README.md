@@ -198,9 +198,14 @@ weekly and fails, quoting the rule's source, when the two have drifted.
 Vaadin 25 on Spring Boot 4, and nothing else. The two generations differ in ways
 one pom template cannot straddle honestly — Boot 4 splits auto-configuration into
 a module per technology and renames several starters — so Vaadin 24 would mean a
-second set of templates rather than another conditional. The line the tool
-generates is the one `compat.json` marks `supported`; a version from any other is
-refused with that reason.
+second set of templates rather than another conditional — and the tree has room
+for one: `templates/` holds one directory per Vaadin version floor (`25`, and
+later `24`, `25.3`, …), each with only the files that differ from the floors
+below it, and a project is rendered through every directory whose floor is at or
+below its Vaadin version, newest first. The lines the tool generates are the ones
+`compat.json` marks `supported`, and a test holds the flag and the directories to
+agree; a version from any other line is refused with that reason. `--dry-run`
+names the directories a project came through.
 
 ## Layout
 
@@ -213,14 +218,16 @@ internal/versions/          the Maven Central lookup, and its fallback
 internal/prompt/            the TUI
 internal/generate/          the manifest, and rendering it to disk
 internal/checkcompat/       the weekly check of compat.json against Maven Central
-templates/                  what gets generated
+templates/<version>/        what gets generated, one directory per Vaadin version floor
 defaults.toml               what the prompts start on
 compat.json                 which Spring Boot and JDK go with which Vaadin
 ```
 
 `internal/generate/generate.go` holds the manifest: one line per generated file,
 saying where it goes and which option asks for it. A new template is a template
-plus a line there.
+in the directory of the version it is true from, plus a line there. A file that
+changes at a version goes into a new directory named for that version, holding
+that file alone; the rest is found in the directories below it.
 
 `templates/run.sh` and `templates/commit-msg` are copied verbatim, never rendered.
 They name no project, which is what lets every generated project share them — and

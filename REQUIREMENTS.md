@@ -28,7 +28,7 @@ terminal), plain sequential prompts (`--accessible`), and no prompts at all
 | `internal/generate` | the manifest, and rendering it to disk |
 | `internal/ui` | the palette, the huh theme, and every renderer |
 | `internal/checkcompat` | the CI check of `compat.json` against Maven Central |
-| `templates/` | what gets generated |
+| `templates/<version>/` | what gets generated, one directory per Vaadin version floor |
 
 1.5 `internal/prompt` never writes files and never starts processes. Writing the
 project and running a task are functions passed in through `prompt.Options`.
@@ -88,7 +88,10 @@ a flag (see --help)`.
 user typed them. Whether a flag was typed is read from `flag.FlagSet.Visit`, not
 from comparing values.
 
-2.6 A version flag is used as typed. Left out, the three are derived in order, in
+2.6 A version flag is used as typed, except that `--vaadin-version` given a line
+— `25`, or `25.2`: fewer than three numbers — is the newest release the lookup
+found in that line, and an error naming the line when there is none. Left out,
+the three are derived in order, in
 the TUI and in `--yes` alike: Vaadin is the newest release the lookup found;
 Spring Boot is the release that Vaadin was built with (§5.6) when the rules allow
 it, otherwise the newest release they allow; Java is the defaults file's when the
@@ -573,8 +576,22 @@ all mean none.
 7.1 The whole tree is rendered into memory before anything is written, so a broken
 template leaves nothing on disk.
 
+7.1.1 `templates/` holds one directory per Vaadin version floor, named by the
+version its contents are true from — `25`, `25.2`, `25.2.3` — as
+`version.ParseFloor` reads it. `generate.New` reads the root once and refuses a
+file at the top or a name that is not a floor. `Layers(vaadin)` is every
+directory whose floor is at or below the version, newest first; none is an error
+naming the oldest set (`no templates for Vaadin 23.3.0: the oldest set is for
+24`), never a fall-back. A template is read from the first layer in the chain
+that has it, and `File.Source` names the layer-qualified path it came from. A
+layer holds only the files that differ from the layers below it; whether a file
+exists at all is the manifest's `when`, with `atLeast(vaadin)` for a file one
+line has and another does not. `--dry-run` prints `templates 25.2 → 25 → 24`
+under its heading.
+
 7.2 The manifest is the generated project, declared once. `dst` is itself a
-template, which is what places Java sources under the chosen package.
+template, which is what places Java sources under the chosen package; `src` is
+relative to whichever layer supplies it.
 
 | Template | Destination | When | Mode |
 | --- | --- | --- | --- |
@@ -743,12 +760,14 @@ smoke test that builds the binary and runs `--version` and
 
 11.2 `cross-compile` — `make dist`, uploaded as artifacts.
 
-11.3 `generated project` — twice, once with everything off on the Aura default
-and once with everything on and `--theme lumo`, so both themes are compiled by a
-real JDK: generate with `--yes`, assert the project committed itself and has
-a clean working tree, then install Temurin 21 with the Maven cache keyed on the
-generated pom, and build and test it through `./run.sh test`. Surefire reports are
-kept on failure.
+11.3 `generated project` — per supported Vaadin line, twice: once with everything
+off on the Aura default and once with everything on and `--theme lumo`, so both
+themes are compiled by a real JDK. The line is passed as `--vaadin-version <line>`
+(§2.6), so no release number is pinned in the workflow, and each line names the
+JDK its floor pins for `setup-java`. Each leg generates with `--yes`, asserts the
+project committed itself and has a clean working tree, installs Temurin with the
+Maven cache keyed on the generated pom, and builds and tests it through
+`./run.sh test`. Surefire reports are kept on failure.
 
 11.4 `.github/workflows/versions.yml`, weekly, on demand, and on a pull request
 touching `compat.json` or the check, runs `go run ./internal/checkcompat
@@ -865,7 +884,9 @@ through.
 ## 13. Verification
 
 13.1 `internal/generate` renders all 32 combinations of the five options, under
-each of the two themes, and
+each theme the line ships, for every line `compat.json` supports — from a table
+of one version set per line, which a test requires to have a row for every
+supported line and no row for any other, each row accepted by the rules — and
 checks each: the pom is well-formed XML, the realm is valid JSON, no file carries
 an unresolved template value, every Java file declares the package its path
 implies, each optional file appears exactly when its option is on, the pom names a
@@ -884,7 +905,14 @@ repository's config and no further and is who the commit is by, and that
 `CurrentAuthor(dir)` reports what git has — nothing, one half, both — including
 an identity from the output directory's own repository or from a conditional
 include keyed on its parent, and not the identity of the repository the test is
-standing in; and that asking leaves nothing beside the project.
+standing in; and that asking leaves nothing beside the project. On the layers:
+that `Layers` follows the floors on a tree of its own (`25.2 25 24` for 25.2.6,
+`25 24` for 25.1.0, `24` for 24.10.9, an error naming 24 for 23.3.0) and `open`
+takes a file from the newest layer that has it; that `New` refuses a file at the
+top, a directory not named by a floor, and an empty root; that `compat.json`'s
+supported lines and the directories agree in both directions; that every file in
+every layer is named by a manifest entry; that no layer repeats, byte for byte,
+the file below it; and that the verbatim files are read through `File.Source`.
 
 13.2 `internal/prompt` drives the conversation two ways: through huh's accessible
 mode, and by stepping the full-screen model at a range of terminal sizes. The
