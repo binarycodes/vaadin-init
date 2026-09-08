@@ -168,23 +168,50 @@ To change what the prompts start on, drop a file shaped like `defaults.toml` at:
 Keys left out keep their built-in value, so a personal file only names what it
 changes. `--defaults <path>` overrides both.
 
+The three versions are also checked against each other. `compat.json`, embedded
+beside `defaults.toml`, holds the rules: which Spring Boot line and minimum each
+Vaadin line needs, which JDKs each Boot line runs on, and which Java releases are
+LTS. The Boot list is filtered by them and opens on the release the chosen Vaadin
+was built with, read from its starter pom on Maven Central; the Java list holds
+the LTS releases and the newest release in the range both allow, with anything
+else one "type one myself" away; and a set that does not go together is refused —
+at the field in the TUI, and before anything is written from a script:
+
+```
+✗ spring boot version: Vaadin 25.2.6 needs Spring Boot 4.1.0 or newer; got 4.0.8
+  (https://github.com/vaadin/platform/releases/tag/25.2.0)
+```
+
+The rules take the same two overrides as the defaults — a file at
+`<config dir>/vaadin-init/compat.json`, or `--compat <path>` — where a line named
+replaces the built-in line of that name. The rules exist only as prose in release
+notes, so the file is what a pull request edits when a Vaadin or Spring Boot
+minor moves them; `.github/workflows/versions.yml` checks it against Maven Central
+weekly and fails, quoting the rule's source, when the two have drifted.
+
 ## Scope
 
 Vaadin 25 on Spring Boot 4, and nothing else. The two generations differ in ways
 one pom template cannot straddle honestly — Boot 4 splits auto-configuration into
 a module per technology and renames several starters — so Vaadin 24 would mean a
-second set of templates rather than another conditional.
+second set of templates rather than another conditional. The line the tool
+generates is the one `compat.json` marks `supported`; a version from any other is
+refused with that reason.
 
 ## Layout
 
 ```
 main.go                     flags, embedding, and the non-interactive path
 internal/config/            the answers, and what counts as a valid answer
+internal/compat/            the rules in compat.json, as functions
+internal/version/           parsing and comparing version numbers
 internal/versions/          the Maven Central lookup, and its fallback
 internal/prompt/            the TUI
 internal/generate/          the manifest, and rendering it to disk
+internal/checkcompat/       the weekly check of compat.json against Maven Central
 templates/                  what gets generated
 defaults.toml               what the prompts start on
+compat.json                 which Spring Boot and JDK go with which Vaadin
 ```
 
 `internal/generate/generate.go` holds the manifest: one line per generated file,
@@ -215,6 +242,13 @@ name in a Java template is invisible until `javac` sees it. It builds through
 It runs `./run.sh test` rather than `verify` — that compiles every source and test,
 integration tests included, and runs the unit tests, without the production
 frontend build and browser download that `verify` adds.
+
+`.github/workflows/versions.yml` runs weekly, on demand, and on a pull request
+that touches `compat.json`. It reads the file and Maven Central and fails when
+they disagree: a supported Vaadin line whose newest release was built with a
+Spring Boot the rules refuse for it, a Vaadin major or Spring Boot minor with no
+rule, or a Boot line the tool offers past the end of its support. The message
+quotes the rule's source, so the fix is a read and an edit of the file.
 
 ## Development
 

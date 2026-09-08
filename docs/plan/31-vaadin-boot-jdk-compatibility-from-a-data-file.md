@@ -257,6 +257,47 @@ the file being stable enough to trust remotely, so it is last.
 wrong project. Then 3 and 4, which change what is offered. Then 7, before the
 first Vaadin minor lands without anyone noticing. 8 when 26 exists.
 
+## As built
+
+1 to 7 are done; 8 waits for 26. Where the implementation differs from the text
+above, and why:
+
+- **The Java list is the LTS releases in the range and the newest release in
+  it**, not every major — `21 · LTS`, `25 · LTS`, `26` for 25.2.6 on 4.1.0 — with
+  the rest behind the same "type one myself" hatch and accepted by the rules.
+  Two reasons. A feature release older than the newest is out of support the day
+  the next one ships, so a list of 22, 23 and 24 is a list of JDKs nobody should
+  start a project on; and six rows plus a two-line description is what pushed the
+  Versions column past a terminal that tiled. start.vaadin.com's own Java list is
+  exactly LTS plus newest.
+- **The scheduled check is Go, not jq** — `go run ./internal/checkcompat` — for
+  the reason plan 05 gives: the version parse and the two Maven Central readers
+  already exist and are tested, and the decision is a pure function over the
+  fetched lists that is tested offline. JSON stays the format, for the fetch in 8.
+  Plan 05's job did not exist yet, so `.github/workflows/versions.yml` is new and
+  is where 05 adds its checks.
+- **A Boot minor with no rule has no Java ceiling** rather than being refused: a
+  new Boot minor is compatible by the Vaadin rule's line and minimum the day it
+  ships, and refusing it until the file catches up would be the tool being wrong
+  for a week. The list then runs to the newest Java any Boot rule names, and the
+  weekly check is what asks for the missing rule.
+- **The pin is checked against the rules before it is offered.** A starter pom
+  that names a Boot the rules refuse is the rules being stale, which the check
+  notices; until then the newest allowed release is offered, because a default
+  the validator then refuses is worse than an older one it accepts.
+- **The pinned label is `4.1.0 · built with 25.2.6`**, without "Vaadin": the
+  longer label wraps in a column, and a wrapped option puts the list's rows and
+  huh's viewport out of step.
+- **huh scrolls a list so the bound value is its first row**, which hid the
+  newer releases above the pin. The list is set with its first option bound and
+  the cursor walked down to the answer instead, which scrolls only when the
+  cursor leaves the view — and with every option in view it never does.
+- **`Config.Validate` takes the rules** as a parameter rather than reaching for
+  a package-level value, and the rules are passed to the prompt through
+  `prompt.Options`, beside the pin source.
+- The version parse moved to `internal/version`, since `internal/versions`
+  cannot import the rules that need it and the rules cannot import the lookup.
+
 ## Test
 
 - `internal/compat`: table tests over the example file — `Vaadin("24.10.9")`
