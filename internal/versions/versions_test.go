@@ -117,28 +117,3 @@ func TestLatest(t *testing.T) {
 		t.Errorf("Latest = %q, want the first entry", got)
 	}
 }
-
-func TestParseVersion(t *testing.T) {
-	cases := []struct {
-		raw       string
-		ok        bool
-		qualifier string
-	}{
-		{"25.2.6", true, ""},
-		{"25.2", true, ""},
-		{"25.2.0-beta1", true, "beta1"},
-		{"4.1.1", true, ""},
-		{"not-a-version", false, ""},
-		{"", false, ""},
-	}
-	for _, c := range cases {
-		v, ok := parseVersion(c.raw)
-		if ok != c.ok {
-			t.Errorf("parseVersion(%q) ok = %v, want %v", c.raw, ok, c.ok)
-			continue
-		}
-		if ok && v.qualifier != c.qualifier {
-			t.Errorf("parseVersion(%q) qualifier = %q, want %q", c.raw, v.qualifier, c.qualifier)
-		}
-	}
-}

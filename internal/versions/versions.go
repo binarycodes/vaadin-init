@@ -17,10 +17,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"sort"
-	"strconv"
-	"strings"
+
+	"github.com/binarycodes/vaadin-init/internal/version"
 )
 
 const (
@@ -123,10 +122,10 @@ func stableVersions(ctx context.Context, client *http.Client, url string, major 
 		return nil, err
 	}
 
-	var stable []version
+	var stable []version.Version
 	for _, raw := range parsed.Versioning.Versions {
-		v, ok := parseVersion(raw)
-		if !ok || v.major != major || v.qualifier != "" {
+		v, ok := version.Parse(raw)
+		if !ok || v.Major != major || !v.Stable() {
 			continue
 		}
 		stable = append(stable, v)
@@ -135,53 +134,14 @@ func stableVersions(ctx context.Context, client *http.Client, url string, major 
 	// Newest first, by number rather than by string: the metadata is roughly in
 	// release order, but "25.1.10" sorts before "25.1.9" as text, so trusting
 	// either the file's order or a lexical sort offers the wrong release.
-	sort.Slice(stable, func(i, j int) bool { return stable[i].after(stable[j]) })
+	sort.Slice(stable, func(i, j int) bool { return stable[i].After(stable[j]) })
 
 	list := make([]string, 0, offered)
 	for _, v := range stable {
 		if len(list) == offered {
 			break
 		}
-		list = append(list, v.raw)
+		list = append(list, v.Raw)
 	}
 	return list, nil
-}
-
-type version struct {
-	raw                 string
-	major, minor, patch int
-	qualifier           string
-}
-
-var versionPattern = regexp.MustCompile(`^(\d+)\.(\d+)(?:\.(\d+))?(?:[-.]([A-Za-z0-9.]+))?$`)
-
-// parseVersion splits a Maven version far enough to compare it and to tell a
-// release from a pre-release. Anything it does not recognise is reported as
-// unparsed rather than guessed at, and the caller then skips it.
-func parseVersion(raw string) (version, bool) {
-	match := versionPattern.FindStringSubmatch(strings.TrimSpace(raw))
-	if match == nil {
-		return version{}, false
-	}
-	number := func(s string) int {
-		n, _ := strconv.Atoi(s)
-		return n
-	}
-	return version{
-		raw:       raw,
-		major:     number(match[1]),
-		minor:     number(match[2]),
-		patch:     number(match[3]),
-		qualifier: match[4],
-	}, true
-}
-
-func (v version) after(other version) bool {
-	if v.major != other.major {
-		return v.major > other.major
-	}
-	if v.minor != other.minor {
-		return v.minor > other.minor
-	}
-	return v.patch > other.patch
 }
