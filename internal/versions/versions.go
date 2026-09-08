@@ -54,7 +54,9 @@ type pom struct {
 }
 
 // Lines is which release lines to keep: the ones this tool has templates for,
-// as the compatibility rules name them — "25" for Vaadin, "4" for Boot.
+// as the compatibility rules name them — "25" for Vaadin, "4" for Boot. An empty
+// list keeps every line, which is what the scheduled check wants and the tool
+// never does.
 type Lines struct {
 	Vaadin []string
 	Boot   []string
@@ -140,6 +142,9 @@ func stableVersions(ctx context.Context, client *http.Client, url string, lines 
 }
 
 func inLines(v version.Version, lines []string) bool {
+	if len(lines) == 0 {
+		return true
+	}
 	for _, line := range lines {
 		if v.InLine(line) {
 			return true

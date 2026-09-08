@@ -65,6 +65,16 @@ func TestStableVersionsKeepsEveryLineAskedFor(t *testing.T) {
 	if want := "4.1.1 4.0.8 3.5.15"; strings.Join(got, " ") != want {
 		t.Fatalf("got %v, want %v", got, want)
 	}
+
+	// No lines named: every release, for the check that looks for lines the
+	// rules have not heard of.
+	got, err = stableVersions(context.Background(), server.Client(), server.URL, nil)
+	if err != nil {
+		t.Fatalf("stableVersions: %v", err)
+	}
+	if want := "5.0.0 4.1.1 4.0.8 3.5.15"; strings.Join(got, " ") != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
 }
 
 func TestStableVersionsReportsAnErrorStatus(t *testing.T) {
