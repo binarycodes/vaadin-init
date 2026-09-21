@@ -1,0 +1,68 @@
+{
+  "$comment": [
+    "Which Spring Boot, JDK and themes go with a Vaadin release. Rules only: the",
+    "exact releases are looked up on Maven Central, and the Boot a Vaadin release",
+    "was built with is read from its published starter pom.",
+    "",
+    "To change: read the release notes for the new Vaadin minor or Spring Boot",
+    "minor, add or tighten the entry, cite the URL in source, open a pull request.",
+    "A Vaadin line is `supported` when this tool has templates for it, under",
+    "templates/<line>/; a test in internal/generate holds the two to agree. `since`",
+    "tightens boot_min from a release onwards without splitting the line. `themes`",
+    "lists the themes the line ships, the default first.",
+    "java_max is inclusive. A weekly CI job checks this file against what Maven",
+    "Central publishes and fails, quoting source, when the two have drifted.",
+    "",
+    "This copy is embedded in the binary. To override it, drop a file with the same",
+    "shape at <user config dir>/vaadin-init/compat.json or pass --compat <path>;",
+    "a line named there replaces the embedded line of the same name."
+  ],
+  "vaadin": [
+    {
+      "line": "25",
+      "supported": true,
+      "java_min": 21,
+      "boot_line": "4",
+      "boot_min": "4.0.0",
+      "themes": ["aura", "lumo"],
+      "since": [
+        { "vaadin": "25.1.0", "boot_min": "4.0.4" },
+        { "vaadin": "25.2.0", "boot_min": "4.1.0" }
+      ],
+      "source": "https://github.com/vaadin/platform/releases/tag/25.2.0"
+    },
+    {
+      "line": "24",
+      "supported": false,
+      "java_min": 17,
+      "boot_line": "3",
+      "boot_min": "3.5.0",
+      "themes": ["lumo"],
+      "source": "https://vaadin.com/docs/v24/compatibility"
+    }
+  ],
+  "boot": [
+    {
+      "line": "4.1",
+      "java_min": 17,
+      "java_max": 26,
+      "eol": "2027-07-31",
+      "source": "https://docs.spring.io/spring-boot/4.1/system-requirements.html"
+    },
+    {
+      "line": "4.0",
+      "java_min": 17,
+      "java_max": 26,
+      "eol": "2026-12-31",
+      "source": "https://docs.spring.io/spring-boot/4.0/system-requirements.html"
+    },
+    {
+      "line": "3.5",
+      "java_min": 17,
+      "java_max": 25,
+      "eol": "2026-06-30",
+      "source": "https://docs.spring.io/spring-boot/3.5/system-requirements.html"
+    }
+  ],
+  "java": { "lts": [17, 21, 25] }
+}

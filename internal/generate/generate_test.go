@@ -5,20 +5,73 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
+	"github.com/binarycodes/vaadin-init/internal/compat"
 	"github.com/binarycodes/vaadin-init/internal/config"
+	"github.com/binarycodes/vaadin-init/internal/version"
 )
 
 // templates reads the real template tree rather than a fixture, because the point
 // of these tests is the templates.
 func templates(t *testing.T) *Generator {
 	t.Helper()
-	return New(os.DirFS("../../templates"))
+	g, err := New(os.DirFS("../../templates"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+// rules is the shipped compat.json: which lines the tree has to have templates
+// for, and which themes each ships.
+func rules(t *testing.T) compat.Rules {
+	t.Helper()
+	content, err := os.ReadFile("../../compat.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := compat.Parse(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// lines is one real set of versions per supported Vaadin line, for rendering that
+// line's templates. Every supported line has to have a row, and every row has to
+// be a set the rules accept, so the examples stay true as the rules move.
+var lines = map[string]struct{ vaadin, boot, java string }{
+	"25": {"25.2.6", "4.1.1", "21"},
+}
+
+func TestEverySupportedLineHasAVersionRow(t *testing.T) {
+	r := rules(t)
+	supported, _ := r.Supported()
+	for _, line := range supported {
+		row, ok := lines[line]
+		if !ok {
+			t.Errorf("no version row for supported line %s; add one to lines", line)
+			continue
+		}
+		java := 0
+		fmt.Sscan(row.java, &java)
+		if err := r.Check(row.vaadin, row.boot, java, r.Themes(row.vaadin)[0]); err != nil {
+			t.Errorf("the row for line %s is not a set the rules accept: %v", line, err)
+		}
+	}
+	for line := range lines {
+		if !slices.Contains(supported, line) {
+			t.Errorf("a version row for line %s, which the rules do not support", line)
+		}
+	}
 }
 
 func baseConfig() config.Config {
@@ -39,33 +92,49 @@ func baseConfig() config.Config {
 	}
 }
 
-// everyCombination enumerates all 32 combinations of the five options under each
-// of the two themes, so that a template conditional that only holds for the
-// combinations someone happened to try by hand fails here instead.
+// everyCombination enumerates all 32 combinations of the five options, under
+// each theme the line ships, for every supported line — so that a template
+// conditional that only holds for the combinations someone happened to try by
+// hand fails here instead, and a line's templates are rendered at all.
 func everyCombination() []config.Config {
 	var all []config.Config
-	for _, theme := range []string{config.ThemeAura, config.ThemeLumo} {
-		for bits := 0; bits < 32; bits++ {
-			c := baseConfig()
-			c.Theme = theme
-			c.Database = bits&1 != 0
-			c.Auth = bits&2 != 0
-			c.E2E = bits&4 != 0
-			c.Coverage = bits&8 != 0
-			c.Traceable = bits&16 != 0
-			all = append(all, c)
+	content, err := os.ReadFile("../../compat.json")
+	if err != nil {
+		panic(err)
+	}
+	r, err := compat.Parse(content)
+	if err != nil {
+		panic(err)
+	}
+	supported, _ := r.Supported()
+	for _, line := range supported {
+		row := lines[line]
+		for _, theme := range r.Themes(row.vaadin) {
+			for bits := 0; bits < 32; bits++ {
+				c := baseConfig()
+				c.VaadinVersion, c.BootVersion, c.JavaVersion = row.vaadin, row.boot, row.java
+				c.Theme = theme
+				c.Database = bits&1 != 0
+				c.Auth = bits&2 != 0
+				c.E2E = bits&4 != 0
+				c.Coverage = bits&8 != 0
+				c.Traceable = bits&16 != 0
+				all = append(all, c)
+			}
 		}
 	}
 	return all
 }
 
-// describe names a combination for a subtest and a failure message.
+// describe names a combination for a subtest and a failure message, the line
+// first.
 func describe(c config.Config) string {
 	name := strings.Join(c.Selected(), "+")
 	if name == "" {
 		name = "core-only"
 	}
-	return c.Theme + "/" + name
+	v, _ := version.Parse(c.VaadinVersion)
+	return fmt.Sprintf("%d/%s/%s", v.Major, c.Theme, name)
 }
 
 func (g *Generator) renderMap(t *testing.T, c config.Config) map[string]string {
@@ -323,21 +392,155 @@ func TestRunSHIsExecutableAndTheHookToo(t *testing.T) {
 // run.sh is shared as it stands, so it must arrive unmodified — the moment a
 // project's copy is rendered, it stops being the same file for everyone.
 func TestSharedFilesAreCopiedVerbatim(t *testing.T) {
-	g := templates(t)
-	files := g.renderMap(t, baseConfig())
+	files, err := templates(t).Render(baseConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, path := range []string{"run.sh", ".githooks/commit-msg"} {
-		source := path
-		if path == ".githooks/commit-msg" {
-			source = "commit-msg"
+		// Through the layer the file came from, since which directory holds
+		// run.sh is the generator's to know.
+		i := slices.IndexFunc(files, func(f File) bool { return f.Path == path })
+		if i < 0 {
+			t.Fatalf("%s was not generated", path)
 		}
-		original, err := os.ReadFile("../../templates/" + source)
+		original, err := os.ReadFile("../../templates/" + files[i].Source)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if files[path] != string(original) {
+		if string(files[i].Body) != string(original) {
 			t.Errorf("%s was modified on the way out; it should be copied verbatim", path)
 		}
+	}
+}
+
+// The layers, on a tree of this test's own: a project for a version is rendered
+// through every directory whose floor is at or below it, newest first, and a
+// file comes from the first that has it.
+func TestLayersFollowTheVersionFloors(t *testing.T) {
+	tree := fstest.MapFS{
+		"24/pom.xml.tmpl":   {Data: []byte("pom 24")},
+		"24/run.sh":         {Data: []byte("run")},
+		"25/pom.xml.tmpl":   {Data: []byte("pom 25")},
+		"25.2/pom.xml.tmpl": {Data: []byte("pom 25.2")},
+	}
+	g, err := New(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for vaadin, want := range map[string]string{
+		"25.2.6":       "25.2 25 24",
+		"25.2.0":       "25.2 25 24",
+		"25.1.0":       "25 24",
+		"24.10.9":      "24",
+		"25.3.0-beta1": "25.2 25 24",
+	} {
+		chain, err := g.Layers(vaadin)
+		if err != nil {
+			t.Errorf("Layers(%s): %v", vaadin, err)
+			continue
+		}
+		if got := strings.Join(chain, " "); got != want {
+			t.Errorf("Layers(%s) = %s, want %s", vaadin, got, want)
+		}
+	}
+	if _, err := g.Layers("23.3.0"); err == nil || !strings.Contains(err.Error(), "the oldest set is for 24") {
+		t.Errorf("Layers(23.3.0) = %v, want an error naming the oldest set", err)
+	}
+
+	chain, _ := g.Layers("25.2.6")
+	body, from, err := g.open(chain, "pom.xml.tmpl")
+	if err != nil || string(body) != "pom 25.2" || from != "25.2/pom.xml.tmpl" {
+		t.Errorf("open(pom) = %q from %q, %v; want the newest layer's", body, from, err)
+	}
+	body, from, err = g.open(chain, "run.sh")
+	if err != nil || string(body) != "run" || from != "24/run.sh" {
+		t.Errorf("open(run.sh) = %q from %q, %v; want it found down in 24", body, from, err)
+	}
+	if _, _, err := g.open(chain, "missing"); err == nil {
+		t.Error("a template in no layer should be an error")
+	}
+}
+
+// The top of the tree holds version directories and nothing else.
+func TestNewRefusesATreeItCannotRead(t *testing.T) {
+	for name, tree := range map[string]fstest.MapFS{
+		"a file at the top":         {"pom.xml.tmpl": {Data: []byte("x")}},
+		"a directory not a version": {"v25/pom.xml.tmpl": {Data: []byte("x")}},
+		"nothing at all":            {},
+	} {
+		if _, err := New(tree); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// compat.json and the tree agree about which lines exist, in both directions:
+// every supported line has templates, and every template directory is for a
+// supported line. Two edits when a line is added, each failing on its own when
+// the other is forgotten.
+func TestTheRulesAndTheTreeAgree(t *testing.T) {
+	g := templates(t)
+	supported, _ := rules(t).Supported()
+
+	for _, line := range supported {
+		if !slices.ContainsFunc(g.layers, func(l layer) bool { return l.floor.InLine(line) }) {
+			t.Errorf("compat.json supports Vaadin %s and templates/ has no directory for it", line)
+		}
+	}
+	for _, l := range g.layers {
+		if !slices.ContainsFunc(supported, l.floor.InLine) {
+			t.Errorf("templates/%s is for a line compat.json does not support; flip the flag or hold the directory back", l.name)
+		}
+	}
+}
+
+// Every file in every layer is reached by a manifest entry. A file no entry
+// names is a copy left behind when the manifest moved on, and overlay is what
+// makes that easy to miss.
+func TestEveryTemplateIsInTheManifest(t *testing.T) {
+	g := templates(t)
+	named := map[string]bool{}
+	for _, f := range manifest {
+		named[f.src] = true
+	}
+	for _, l := range g.layers {
+		fs.WalkDir(g.templates, l.name, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !d.IsDir() && !named[strings.TrimPrefix(p, l.name+"/")] {
+				t.Errorf("templates/%s is reached by no manifest entry", p)
+			}
+			return nil
+		})
+	}
+}
+
+// A file in a layer that is byte-identical to the same file in the layer below
+// changes nothing and is the twin plan 23 warns about: two copies, one of which
+// will be fixed.
+func TestNoLayerRepeatsTheFileBelowIt(t *testing.T) {
+	g := templates(t)
+	for i, l := range g.layers {
+		fs.WalkDir(g.templates, l.name, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			src := strings.TrimPrefix(p, l.name+"/")
+			body, _ := fs.ReadFile(g.templates, p)
+			for _, below := range g.layers[i+1:] {
+				lower, err := fs.ReadFile(g.templates, below.name+"/"+src)
+				if err != nil {
+					continue
+				}
+				if string(lower) == string(body) {
+					t.Errorf("templates/%s is identical to templates/%s/%s; the override changes nothing", p, below.name, src)
+				}
+				break
+			}
+			return nil
+		})
 	}
 }
 

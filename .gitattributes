@@ -1,6 +1,6 @@
 # Line endings are LF in the repository and in every checkout, on every platform.
 #
-# Not a style preference. templates/run.sh is embedded in the binary and copied
+# Not a style preference. templates/*/run.sh is embedded in the binary and copied
 # verbatim into every generated project, so a checkout that converted it to CRLF
 # would produce projects whose task runner dies on its first line with
 # "$'\r': command not found". The same goes for the commit-msg hook. Windows

@@ -35,7 +35,7 @@ implemented; a file is a proposal, not a record.
 | | | |
 | --- | --- | --- |
 | 02 | [Room for answers that are not yes-or-no](02-non-boolean-answers-in-the-tui.md) | Every optional decision is a boolean in four places at once. |
-| 04 | [Reject an unsupported framework version](04-version-compatibility-validation.md) | `--vaadin-version 24.4.0` renders a project that cannot build, silently. |
+| 04 | [Reject an unsupported framework version](04-version-compatibility-validation.md) | `--vaadin-version 24.4.0` renders a project that cannot build, silently. Folded into 31. |
 | 05 | [Hand-pinned tool versions go stale](05-pinned-tool-versions-go-stale.md) | Playwright, JaCoCo and the surefire report plugin are watched by nobody. |
 | 08 | [Compiling a generated project without pushing](08-verifying-generated-projects-outside-ci.md) | The likeliest class of mistake is caught only by CI. |
 | 10 | [The summary promises a build that cannot run](10-the-summary-promises-a-build-that-cannot-run.md) | `--traceable --no-git` prints next steps whose first command exits 1. |
@@ -45,6 +45,8 @@ implemented; a file is a proposal, not a record.
 | 27 | [`~/projects/app` creates a directory called `~`](27-a-typed-path-with-a-tilde-creates-a-directory-called-tilde.md) | A shell would have expanded it; a prompt does not. |
 | 28 | [No way back, no way to replay](28-there-is-no-way-back-and-no-way-to-replay.md) | A wrong group id means starting over, and a good run leaves no record of itself. |
 | 29 | [A half-written project blocks its own retry](29-a-half-written-project-blocks-its-own-retry.md) | Rendering is atomic; writing is not, which is the case the package comment warns about. |
+| 31 | [Vaadin → Spring Boot → JDK from a data file](31-vaadin-boot-jdk-compatibility-from-a-data-file.md) | Three versions asked as three unrelated answers; the rules that tie them live nowhere. start.vaadin.com hard-codes them and rebuilds. |
+| 32 | [One template tree per Vaadin line](32-vaadin-version-specific-templates.md) | `compat.json` says a line is supported when templates exist for it, and the tree has room for exactly one. |
 
 ## The repository
 

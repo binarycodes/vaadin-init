@@ -12,7 +12,6 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/binarycodes/vaadin-init/internal/ui"
-	"github.com/binarycodes/vaadin-init/internal/versions"
 )
 
 // TestPreview prints the screen as it will appear, at a few terminal sizes.
@@ -131,12 +130,11 @@ func TestPreview(t *testing.T) {
 // versions the lookup would have found, and tell it the size of the window.
 func preview(width, height int) *screen {
 	c := seed()
-	s := newScreen(&c, offered(), Options{
-		Banner: ui.Banner("v0.1.0",
-			strconv.Itoa(versions.VaadinMajor), strconv.Itoa(versions.BootMajor)),
-	})
+	options := conversation()
+	options.Banner = ui.Banner("v0.1.0", "25", "4")
+	s := newScreen(&c, lookedUp(), options)
 	s.Init()
-	s.Update(versionsMsg(fetched()))
+	land(s)
 	s.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	return s
 }

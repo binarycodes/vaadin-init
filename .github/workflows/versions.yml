@@ -1,0 +1,37 @@
+# Keeps compat.json true.
+#
+# The rules in that file — which Spring Boot and JDK go with a Vaadin release —
+# are written by hand from release notes, and change a handful of times a year
+# with nobody told. This job reads the file and Maven Central once a week and
+# fails when they have drifted apart: a supported Vaadin line whose newest release
+# was built with a Boot the rules refuse, a Vaadin or Boot line with no rule, or
+# a Boot line the tool offers past the end of its support. The failure message
+# quotes the rule's source, so the fix is a read and an edit.
+#
+# A failing scheduled run is the notification. Actions are pinned to commit SHAs
+# for the reason build.yml gives.
+name: versions
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'  # Mondays, 06:17 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - compat.json
+      - internal/checkcompat/**
+
+permissions:
+  contents: read
+
+jobs:
+  compat:
+    name: compat.json against Maven Central
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: check the rules
+        run: go run ./internal/checkcompat compat.json

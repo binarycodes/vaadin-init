@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/binarycodes/vaadin-init/internal/compat"
 )
 
 func TestValidGroupID(t *testing.T) {
@@ -54,16 +56,86 @@ func TestValidPackageRejectsKeywords(t *testing.T) {
 	}
 }
 
+// The shape only: which majors are allowed depends on the other two versions,
+// and is the rules' question rather than this one's.
 func TestValidJavaVersion(t *testing.T) {
 	for _, s := range []string{"17", "21", "25", "31"} {
 		if err := ValidJavaVersion(s); err != nil {
 			t.Errorf("ValidJavaVersion(%q) = %v, want nil", s, err)
 		}
 	}
-	for _, s := range []string{"", "11", "8", "21.0.2", "twenty-one"} {
+	for _, s := range []string{"", "0", "-1", "21.0.2", "twenty-one"} {
 		if err := ValidJavaVersion(s); err == nil {
 			t.Errorf("ValidJavaVersion(%q) = nil, want an error", s)
 		}
+	}
+}
+
+// rules is the shipped compat.json, which is what every Config is validated
+// against unless the user has their own.
+func rules(t *testing.T) compat.Rules {
+	t.Helper()
+	content, err := os.ReadFile("../../compat.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := compat.Parse(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// The three versions are validated together: a Config whose fields are each fine
+// on their own and wrong as a set is the one nothing else catches, since the
+// flags never pass through a prompt.
+func TestValidateChecksTheVersionsTogether(t *testing.T) {
+	base := func() Config {
+		var d Defaults
+		d.GroupID, d.ArtifactID, d.Theme = "com.example", "my-app", ThemeAura
+		d.Ports.From, d.Ports.To = 49000, 51000
+		c := d.ToConfig()
+		c.VaadinVersion, c.BootVersion, c.JavaVersion = "25.2.6", "4.1.0", "21"
+		return c
+	}
+	cases := []struct {
+		name                string
+		vaadin, boot, java  string
+		accepted            bool
+		wantField, wantRule string
+	}{
+		{"the pinned pair on the default JDK", "25.2.6", "4.1.0", "21", true, "", ""},
+		{"the pinned pair on the newest LTS", "25.2.6", "4.1.0", "25", true, "", ""},
+		{"a Boot older than the minor needs", "25.2.6", "4.0.8", "21", false, "spring boot version", "needs Spring Boot 4.1.0 or newer; got 4.0.8"},
+		{"a JDK below Vaadin's floor", "25.2.6", "4.1.0", "17", false, "java version", "Vaadin 25 needs Java 21 or newer; got 17"},
+		{"a JDK above Boot's ceiling", "25.2.6", "4.1.0", "27", false, "java version", "Spring Boot 4.1 supports Java up to 26; got 27"},
+		{"a Vaadin line this tool does not generate", "24.10.9", "3.5.15", "17", false, "vaadin version", "this tool generates Vaadin 25 projects"},
+		{"the wrong line on a right-looking Boot", "24.10.9", "4.1.0", "21", false, "vaadin version", ""},
+	}
+	// And the theme against the Vaadin line, once the versions agree.
+	cfg := base()
+	cfg.Theme = "material"
+	if err := cfg.Validate(rules(t)); err == nil || !strings.HasPrefix(err.Error(), "theme:") {
+		t.Errorf("a theme the line does not ship should be refused as theme: %v", err)
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := base()
+			cfg.VaadinVersion, cfg.BootVersion, cfg.JavaVersion = c.vaadin, c.boot, c.java
+			err := cfg.Validate(rules(t))
+			if c.accepted {
+				if err != nil {
+					t.Fatalf("Validate = %v, want accepted", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("Validate accepted")
+			}
+			if !strings.HasPrefix(err.Error(), c.wantField+":") || !strings.Contains(err.Error(), c.wantRule) {
+				t.Errorf("Validate = %q, want %q naming %q", err, c.wantField, c.wantRule)
+			}
+		})
 	}
 }
 
@@ -117,7 +189,7 @@ func TestDefaultsProduceAValidConfig(t *testing.T) {
 	d.Theme = ThemeAura
 	d.Ports.From, d.Ports.To = 49000, 51000
 
-	if err := d.ToConfig().Validate(); err != nil {
+	if err := d.ToConfig().Validate(rules(t)); err != nil {
 		t.Fatalf("the defaults do not produce a valid config: %v", err)
 	}
 }
@@ -135,7 +207,7 @@ func TestTheShippedDefaultsReachTheConfig(t *testing.T) {
 		t.Fatalf("defaults.toml is not valid TOML: %v", err)
 	}
 	c := d.ToConfig()
-	if err := c.Validate(); err != nil {
+	if err := c.Validate(rules(t)); err != nil {
 		t.Fatalf("the shipped defaults do not produce a valid config: %v", err)
 	}
 	if c.Theme != ThemeAura {
@@ -205,17 +277,17 @@ func TestAuthorIsOptionalButChecked(t *testing.T) {
 		VaadinVersion: "25.2.6", BootVersion: "4.1.1", Theme: ThemeAura, OutputDir: "my-app",
 		AppPort: 49100, DatabasePort: 49200, AuthPort: 49300,
 	}
-	if err := c.Validate(); err != nil {
+	if err := c.Validate(rules(t)); err != nil {
 		t.Fatalf("a config with no author should validate: %v", err)
 	}
 
 	c.AuthorName, c.AuthorEmail = "Ann Example", "ann@example.invalid"
-	if err := c.Validate(); err != nil {
+	if err := c.Validate(rules(t)); err != nil {
 		t.Errorf("a config with an author should validate: %v", err)
 	}
 
 	c.AuthorEmail = "ann"
-	if err := c.Validate(); err == nil {
+	if err := c.Validate(rules(t)); err == nil {
 		t.Error("an email with no @ should be refused")
 	}
 }
@@ -291,11 +363,11 @@ func TestPortsMustBeUnprivilegedAndDistinct(t *testing.T) {
 		VaadinVersion: "25.2.6", BootVersion: "4.1.1", Theme: ThemeAura, OutputDir: "my-app",
 		AppPort: 49100, DatabasePort: 49100, AuthPort: 49300,
 	}
-	if err := c.Validate(); err == nil {
+	if err := c.Validate(rules(t)); err == nil {
 		t.Error("two pieces on the same port should be refused")
 	}
 	c.DatabasePort = 49200
-	if err := c.Validate(); err != nil {
+	if err := c.Validate(rules(t)); err != nil {
 		t.Errorf("three distinct ports should validate: %v", err)
 	}
 }

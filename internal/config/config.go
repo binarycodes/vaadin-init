@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/binarycodes/vaadin-init/internal/compat"
 )
 
 // Config is a complete description of a project to generate.
@@ -188,7 +190,12 @@ func (c Config) Selected() []string {
 // Validate rejects a Config that would generate a project that cannot build.
 // Both entry points run it: the TUI validates field by field as it goes, and
 // this catches what flags set without ever passing through a prompt.
-func (c Config) Validate() error {
+//
+// The rules are the one check that spans fields: whether the Vaadin, Spring Boot
+// and Java versions and the theme go together. They run after the per-field
+// checks, so a version that is not a version is reported as that and not as
+// incompatible.
+func (c Config) Validate(rules compat.Rules) error {
 	for _, check := range []struct {
 		field string
 		err   error
@@ -227,7 +234,8 @@ func (c Config) Validate() error {
 		return fmt.Errorf("ports: the app, database and auth ports must differ; got %d, %d and %d",
 			c.AppPort, c.DatabasePort, c.AuthPort)
 	}
-	return nil
+	java, _ := strconv.Atoi(c.JavaVersion)
+	return rules.Check(c.VaadinVersion, c.BootVersion, java, c.Theme)
 }
 
 // portsNeeded is how many distinct ports a project takes: the application,
@@ -342,15 +350,12 @@ func ValidPackage(s string) error {
 	return nil
 }
 
-// ValidJavaVersion enforces the floor Spring Boot 4 sets rather than a list of
-// blessed releases, so a JDK newer than this tool needs no new release of it.
+// ValidJavaVersion checks the shape only. Which majors the chosen Vaadin and
+// Spring Boot run on is the compatibility rules' question, asked by Validate.
 func ValidJavaVersion(s string) error {
 	n, err := strconv.Atoi(s)
-	if err != nil {
+	if err != nil || n <= 0 {
 		return fmt.Errorf("must be a major version number, e.g. 21")
-	}
-	if n < 17 {
-		return fmt.Errorf("Spring Boot 4 needs Java 17 or newer; got %d", n)
 	}
 	return nil
 }

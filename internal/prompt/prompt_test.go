@@ -2,13 +2,43 @@ package prompt
 
 import (
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/binarycodes/vaadin-init/internal/compat"
 	"github.com/binarycodes/vaadin-init/internal/config"
 	"github.com/binarycodes/vaadin-init/internal/versions"
 )
+
+// rules is the shipped compat.json, which is what the conversation applies unless
+// the user has their own.
+var rules = func() compat.Rules {
+	content, err := os.ReadFile("../../compat.json")
+	if err != nil {
+		panic(err)
+	}
+	r, err := compat.Parse(content)
+	if err != nil {
+		panic(err)
+	}
+	return r
+}()
+
+// pinned is a pin source that knows one release: 25.2.6 was built with 4.1.0,
+// which is not the newest Boot the lookup offers.
+func pinned(vaadin string) string {
+	if vaadin == "25.2.6" {
+		return "4.1.0"
+	}
+	return ""
+}
+
+// conversation is the options every test conversation starts from.
+func conversation() Options {
+	return Options{Rules: rules, Pinned: pinned}
+}
 
 func seed() config.Config {
 	c := config.Config{
@@ -33,7 +63,7 @@ func seed() config.Config {
 	return c
 }
 
-func offered() VersionSource {
+func lookedUp() VersionSource {
 	return func() versions.Available {
 		return versions.Available{
 			Vaadin: []string{"25.2.6", "25.2.5"},
@@ -46,11 +76,11 @@ func offered() VersionSource {
 // mode — which is the only way to exercise the prompts without a terminal.
 func run(t *testing.T, answers string) (config.Config, error) {
 	t.Helper()
-	session, err := Run(seed(), offered(), Options{
-		Accessible: true,
-		Input:      strings.NewReader(answers),
-		Output:     io.Discard,
-	})
+	options := conversation()
+	options.Accessible = true
+	options.Input = strings.NewReader(answers)
+	options.Output = io.Discard
+	session, err := Run(seed(), lookedUp(), options)
 	return session.Config, err
 }
 
@@ -70,11 +100,60 @@ func TestAcceptingEveryDefault(t *testing.T) {
 	if got.VaadinVersion != "25.2.6" {
 		t.Errorf("Vaadin version = %q, want the newest offered", got.VaadinVersion)
 	}
-	if got.BootVersion != "4.1.1" {
-		t.Errorf("Boot version = %q, want the newest offered", got.BootVersion)
+	if got.BootVersion != "4.1.0" {
+		t.Errorf("Boot version = %q, want the release the Vaadin was built with", got.BootVersion)
 	}
-	if err := got.Validate(); err != nil {
+	if got.JavaVersion != "21" {
+		t.Errorf("Java version = %q, want the default, which the pair allows", got.JavaVersion)
+	}
+	if err := got.Validate(rules); err != nil {
 		t.Errorf("the accepted defaults do not validate: %v", err)
+	}
+}
+
+// A version typed over the offered one is checked against the rules at the
+// field, so the conversation keeps asking rather than carrying an incompatible
+// set forward to fail after the last question.
+func TestAnIncompatibleTypedVersionIsRefusedAtTheField(t *testing.T) {
+	// Coordinates and identity accepted, then: a Vaadin from a line this tool
+	// does not generate, refused, then the offered one; a Boot older than that
+	// Vaadin needs, refused, then a newer one; a Java below the floor, refused,
+	// then one in range.
+	answers := strings.Repeat("\n", 5) +
+		"24.10.9\n\n" +
+		"4.0.8\n4.1.1\n" +
+		"17\n25\n" +
+		strings.Repeat("\n", 30)
+
+	got, err := run(t, answers)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got.VaadinVersion != "25.2.6" || got.BootVersion != "4.1.1" || got.JavaVersion != "25" {
+		t.Errorf("versions = %s / %s / %s; the refused answers should not have been kept",
+			got.VaadinVersion, got.BootVersion, got.JavaVersion)
+	}
+	if err := got.Validate(rules); err != nil {
+		t.Errorf("the answers do not validate: %v", err)
+	}
+}
+
+// The Java default follows the pair: a defaults file naming a JDK the chosen
+// Vaadin does not run on opens on the newest LTS release it does.
+func TestAnOutOfRangeJavaDefaultSnaps(t *testing.T) {
+	c := seed()
+	c.JavaVersion = "17"
+	options := conversation()
+	options.Accessible = true
+	options.Input = strings.NewReader(strings.Repeat("\n", 40))
+	options.Output = io.Discard
+
+	session, err := Run(c, lookedUp(), options)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if session.Config.JavaVersion != "25" {
+		t.Errorf("Java version = %q, want the newest LTS in range", session.Config.JavaVersion)
 	}
 }
 
@@ -163,7 +242,7 @@ func TestStackSelectionIsAppliedBothWays(t *testing.T) {
 // reaches the Config, and a blank line keeps the default.
 func TestTheThemeIsAskedAndReachesTheConfig(t *testing.T) {
 	position := func(theme string) string {
-		for i, option := range themeOptions {
+		for i, option := range themeOptions(rules, "25.2.6", config.ThemeAura) {
 			if option.Value == theme {
 				return strconv.Itoa(i + 1)
 			}
@@ -180,7 +259,7 @@ func TestTheThemeIsAskedAndReachesTheConfig(t *testing.T) {
 	if got.Theme != config.ThemeLumo {
 		t.Errorf("theme = %q, want the one chosen", got.Theme)
 	}
-	if err := got.Validate(); err != nil {
+	if err := got.Validate(rules); err != nil {
 		t.Errorf("the answers do not validate: %v", err)
 	}
 
@@ -193,73 +272,66 @@ func TestTheThemeIsAskedAndReachesTheConfig(t *testing.T) {
 	}
 }
 
-// Choosing "type one myself" leaves a sentinel in the version field, and the
-// version typed in the group that follows has to replace it.
-//
-// The sentinel must never survive into a Config: it is not a version, and a
-// pom.xml carrying it would name a dependency that does not exist.
-func TestTypedVersionsResolveTheSentinel(t *testing.T) {
-	cases := []struct {
-		name         string
-		vaadin, boot string
-		typed        typedVersions
-		wantVaadin   string
-		wantBoot     string
-	}{
-		{
-			name:   "a typed version replaces the sentinel",
-			vaadin: custom, boot: custom,
-			typed:      typedVersions{vaadin: "25.3.0-beta1", boot: "4.2.0-RC1"},
-			wantVaadin: "25.3.0-beta1", wantBoot: "4.2.0-RC1",
-		},
-		{
-			name:   "a chosen version is left alone",
-			vaadin: "25.2.6", boot: "4.1.1",
-			typed:      typedVersions{vaadin: "ignored", boot: "ignored"},
-			wantVaadin: "25.2.6", wantBoot: "4.1.1",
-		},
-		{
-			name:   "a sentinel with nothing typed falls back",
-			vaadin: custom, boot: custom,
-			typed:      typedVersions{},
-			wantVaadin: "25.2.6", wantBoot: "4.1.1",
-		},
-		{
-			name:   "only the field left on the sentinel is replaced",
-			vaadin: custom, boot: "4.1.0",
-			typed:      typedVersions{vaadin: "25.9.9"},
-			wantVaadin: "25.9.9", wantBoot: "4.1.0",
-		},
+// The lists the screen derives, on their own: what Boot is offered for a Vaadin,
+// and what Java for the pair.
+func TestBootChoices(t *testing.T) {
+	fetched := []string{"4.1.3", "4.1.2", "4.1.1", "4.1.0", "4.0.8", "4.0.7"}
+
+	list, open := bootChoices(rules, "25.2.6", fetched, "4.1.0", "4.1.1")
+	if want := "4.1.3 4.1.2 4.1.1 4.1.0"; strings.Join(list, " ") != want || open != "4.1.0" {
+		t.Errorf("with a pin: list %v opens on %s; want %s opening on the pin", list, open, want)
 	}
 
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			cfg := config.Config{VaadinVersion: c.vaadin, BootVersion: c.boot}
-			c.typed.resolve(&cfg, "25.2.6", "4.1.1")
+	// The pin is in the list even when it is not among the newest offered.
+	many := []string{"4.1.7", "4.1.6", "4.1.5", "4.1.4", "4.1.3", "4.1.2", "4.1.1", "4.1.0"}
+	list, open = bootChoices(rules, "25.2.6", many, "4.1.0", "4.1.7")
+	if len(list) != offered+1 || list[len(list)-1] != "4.1.0" || open != "4.1.0" {
+		t.Errorf("an old pin should be added to the list: %v opens on %s", list, open)
+	}
 
-			if cfg.VaadinVersion != c.wantVaadin {
-				t.Errorf("Vaadin version = %q, want %q", cfg.VaadinVersion, c.wantVaadin)
-			}
-			if cfg.BootVersion != c.wantBoot {
-				t.Errorf("Boot version = %q, want %q", cfg.BootVersion, c.wantBoot)
-			}
-			if err := config.ValidVersion(cfg.VaadinVersion); err != nil {
-				t.Errorf("resolved Vaadin version is not a version: %v", err)
-			}
-			if err := config.ValidVersion(cfg.BootVersion); err != nil {
-				t.Errorf("resolved Boot version is not a version: %v", err)
-			}
-		})
+	list, open = bootChoices(rules, "25.2.6", fetched, "", "4.1.1")
+	if open != "4.1.3" || len(list) != 4 {
+		t.Errorf("without a pin: %v opens on %s; want the newest compatible", list, open)
+	}
+
+	// Offline: the fallback, and only the fallback.
+	list, open = bootChoices(rules, "25.2.6", nil, "", "4.1.1")
+	if len(list) != 1 || list[0] != "4.1.1" || open != "4.1.1" {
+		t.Errorf("offline: %v opens on %s; want the fallback alone", list, open)
 	}
 }
 
-// The sentinel must not be mistakable for an answer.
-func TestSentinelIsNotAValidVersion(t *testing.T) {
-	if err := config.ValidVersion(custom); err == nil {
-		t.Error("the sentinel should never pass version validation")
+func TestJavaChoices(t *testing.T) {
+	// The LTS releases in the range and the newest in it: what the range comes
+	// to for anyone starting a project; --java-version names the rest.
+	list, open, note := javaChoices(rules, "25.2.6", "4.1.0", "21")
+	if want := "21 25 26"; strings.Join(list, " ") != want {
+		t.Errorf("list = %v, want %s", list, want)
 	}
-	if custom == "" {
-		t.Error("an empty sentinel collides with the zero value of the field it sits beside")
+	if open != "21" {
+		t.Errorf("opens on %s, want the default, which is in range", open)
+	}
+	if note != "21 or newer for Vaadin 25, up to 26 for Spring Boot 4.1." {
+		t.Errorf("note = %q", note)
+	}
+
+	// A default that is in range but not LTS is offered too, since it is where
+	// the cursor opens.
+	list, _, _ = javaChoices(rules, "25.2.6", "4.1.0", "23")
+	if want := "21 23 25 26"; strings.Join(list, " ") != want {
+		t.Errorf("list = %v, want %s", list, want)
+	}
+
+	_, open, note = javaChoices(rules, "25.2.6", "4.1.0", "17")
+	if open != "25" || !strings.Contains(note, "The default, 17, is outside that.") {
+		t.Errorf("an out-of-range default should snap to the newest LTS and say so: %s, %q", open, note)
+	}
+
+	// A pair the rules refuse offers nothing and says why, without the source
+	// cited under it.
+	list, _, note = javaChoices(rules, "25.2.6", "4.0.8", "21")
+	if list != nil || !strings.Contains(note, "needs Spring Boot 4.1.0 or newer") || strings.Contains(note, "\n") {
+		t.Errorf("an incompatible pair: list %v, note %q", list, note)
 	}
 }
 
@@ -301,12 +373,12 @@ func TestTheCommandBarTakesNoAnswer(t *testing.T) {
 // git has no identity to commit with.
 func runAsking(t *testing.T, c config.Config, answers string) (config.Config, error) {
 	t.Helper()
-	session, err := Run(c, offered(), Options{
-		Accessible: true,
-		AskAuthor:  true,
-		Input:      strings.NewReader(answers),
-		Output:     io.Discard,
-	})
+	options := conversation()
+	options.Accessible = true
+	options.AskAuthor = true
+	options.Input = strings.NewReader(answers)
+	options.Output = io.Discard
+	session, err := Run(c, lookedUp(), options)
 	return session.Config, err
 }
 
@@ -332,7 +404,7 @@ func TestTheAuthorIsAskedForWhenGitHasNone(t *testing.T) {
 	if got.AuthorEmail != "ann@example.invalid" {
 		t.Errorf("author email = %q, want the one typed after the refused one", got.AuthorEmail)
 	}
-	if err := got.Validate(); err != nil {
+	if err := got.Validate(rules); err != nil {
 		t.Errorf("the answers do not validate: %v", err)
 	}
 }

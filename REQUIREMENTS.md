@@ -21,11 +21,14 @@ terminal), plain sequential prompts (`--accessible`), and no prompts at all
 | --- | --- |
 | `main` | flags, embedding, process control, the non-interactive path |
 | `internal/config` | the answers, and what counts as a valid answer |
-| `internal/versions` | the Maven Central lookup and its fallback |
+| `internal/compat` | the rules in `compat.json`: which Spring Boot and JDK go with a Vaadin release |
+| `internal/version` | parsing and comparing Maven version numbers |
+| `internal/versions` | the Maven Central lookup, the pinned Spring Boot, and the fallback |
 | `internal/prompt` | the TUI |
 | `internal/generate` | the manifest, and rendering it to disk |
 | `internal/ui` | the palette, the huh theme, and every renderer |
-| `templates/` | what gets generated |
+| `internal/checkcompat` | the CI check of `compat.json` against Maven Central |
+| `templates/<version>/` | what gets generated, one directory per Vaadin version floor |
 
 1.5 `internal/prompt` never writes files and never starts processes. Writing the
 project and running a task are functions passed in through `prompt.Options`.
@@ -45,6 +48,7 @@ has been read.
 | Flag | Default | Effect |
 | --- | --- | --- |
 | `--defaults <path>` | — | read defaults from this file instead of the per-user one |
+| `--compat <path>` | — | read the compatibility rules from this file instead of the per-user one |
 | `--version` | — | print `vaadin-init <version>` and exit 0 |
 | `--group-id` | defaults file | Maven group id |
 | `--artifact-id` | defaults file | Maven artifact id |
@@ -52,8 +56,8 @@ has been read.
 | `--package` | derived | base Java package |
 | `--description` | defaults file | project description |
 | `--vaadin-version` | newest found | Vaadin version |
-| `--boot-version` | newest found | Spring Boot version |
-| `--java-version` | defaults file | JDK major version the build pins |
+| `--boot-version` | derived (§2.6) | Spring Boot version |
+| `--java-version` | defaults file, moved into range (§2.6) | JDK major version the build pins |
 | `--theme` | defaults file | Vaadin theme the project loads: `aura` or `lumo` |
 | `--dir` | the artifact id | where to write the project |
 | `--app-port` | drawn from the range | port the application listens on |
@@ -73,9 +77,9 @@ has been read.
 | `--dry-run` | false | list what would be written, write nothing |
 | `--accessible` | `ACCESSIBLE` env set | plain sequential prompts, for screen readers |
 
-2.3 `--defaults` and `--version` are parsed before the other flags are defined,
-because the defaults file supplies their default values. That pre-parse ignores
-unknown flags; the real parse reports them.
+2.3 `--defaults`, `--compat` and `--version` are parsed before the other flags are
+defined, because the defaults file supplies their default values. That pre-parse
+ignores unknown flags; the real parse reports them.
 
 2.4 A positional argument is an error: `unexpected argument %q; every setting is
 a flag (see --help)`.
@@ -84,8 +88,17 @@ a flag (see --help)`.
 user typed them. Whether a flag was typed is read from `flag.FlagSet.Visit`, not
 from comparing values.
 
-2.6 `--vaadin-version` and `--boot-version` are used only when typed; otherwise
-the newest release found by the lookup wins, in the TUI and in `--yes` alike.
+2.6 A version flag is used as typed, except that `--vaadin-version` given a line
+— `25`, or `25.2`: fewer than three numbers — is the newest release the lookup
+found in that line, and an error naming the line when there is none. Left out,
+the three are derived in order, in
+the TUI and in `--yes` alike: Vaadin is the newest release the lookup found;
+Spring Boot is the release that Vaadin was built with (§5.6) when the rules allow
+it, otherwise the newest release they allow; Java is the defaults file's when the
+pair allows it, otherwise the newest LTS release the pair allows; the theme is the
+defaults file's when the Vaadin line ships it, otherwise the line's own default.
+A `--yes` run with all three versions typed fetches nothing, and the theme then
+stays as named.
 
 2.7 `--author-name` and `--author-email` are for a machine whose git has no
 identity to commit with. Given, they are written to the new repository's own
@@ -146,6 +159,42 @@ do not all land on the same port. A range that is not within 1024–65535, or ha
 room for fewer than three ports, is refused when the file is loaded, naming the
 file.
 
+3.5 `compat.json`, embedded beside `defaults.toml`, holds the compatibility rules
+(§4.5). It is layered the same way — a file at
+`<os.UserConfigDir>/vaadin-init/compat.json`, or `--compat <path>` — except that
+the unit of replacement is a line: a `vaadin` or `boot` entry in the user file
+replaces the embedded entry with the same `line` and other entries are kept, and
+`java.lts` replaces the list whole when given. Shape and shipped values:
+
+```json
+{
+  "vaadin": [
+    { "line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "4.0.0",
+      "since": [ { "vaadin": "25.1.0", "boot_min": "4.0.4" }, { "vaadin": "25.2.0", "boot_min": "4.1.0" } ],
+      "themes": ["aura", "lumo"],
+      "source": "https://github.com/vaadin/platform/releases/tag/25.2.0" },
+    { "line": "24", "supported": false, "java_min": 17, "boot_line": "3", "boot_min": "3.5.0",
+      "themes": ["lumo"],
+      "source": "https://vaadin.com/docs/v24/compatibility" }
+  ],
+  "boot": [
+    { "line": "4.1", "java_min": 17, "java_max": 26, "eol": "2027-07-31", "source": "…" },
+    { "line": "4.0", "java_min": 17, "java_max": 26, "eol": "2026-12-31", "source": "…" },
+    { "line": "3.5", "java_min": 17, "java_max": 25, "eol": "2026-06-30", "source": "…" }
+  ],
+  "java": { "lts": [17, 21, 25] }
+}
+```
+
+`supported` marks the lines this tool has templates for. `since` tightens
+`boot_min` from a Vaadin release onwards. `themes` lists the themes the line
+ships, its default first. `java_max` is inclusive. A `$comment` key carries the
+editing procedure. A file is decoded strictly — an unknown key is an error — and
+every entry is checked: lines look like `25` or `4.1`, `boot_min` and each
+`since` are versions inside their line, `themes` is not empty, Java ranges are
+ranges, `eol` is a date, no line is listed twice, `lts` is not empty. Each
+message names the entry.
+
 ## 4. The answers
 
 4.1 `config.Config` is the only value templates are rendered against:
@@ -176,7 +225,7 @@ before generating:
 | artifact id | `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`, non-empty |
 | project name | non-empty after trimming |
 | package | every `.`-separated segment matches `^[a-z_][a-z0-9_]*$` and is not one of the 50 Java keywords (`_` included) |
-| java version | an integer, ≥ 17 |
+| java version | a positive integer; the range is §4.5's question |
 | vaadin / boot version | `^\d+\.\d+(\.\d+)?(-[A-Za-z0-9.]+)?$`, non-empty |
 | theme | exactly `aura` or `lumo` |
 | output directory | non-empty |
@@ -200,6 +249,31 @@ before generating:
 | `DatabaseName()` | artifact id lower-cased, `-` replaced by `_` |
 | `Selected()` | the options that are on, named `database`, `auth`, `e2e`, `coverage`, `traceable builds` |
 
+4.5 The versions are checked together, after the per-field rules, by
+`compat.Rules.Check`; `Config.Validate` takes the rules. A version's line is the
+longest `line` it is in. In order:
+
+| Rule | Message |
+| --- | --- |
+| the Vaadin line has a rule and is `supported` | `vaadin version: this tool generates Vaadin 25 projects; got 24.10.9, and Vaadin 24 sits on Spring Boot 3` |
+| the Boot is in the line's `boot_line` | `spring boot version: Vaadin 25 sits on Spring Boot 4; got 3.5.15` |
+| the Boot is at least `boot_min`, with every `since` at or below the Vaadin applied | `spring boot version: Vaadin 25.2.6 needs Spring Boot 4.1.0 or newer; got 4.0.8` |
+| Java is at least the Vaadin line's `java_min` | `java version: Vaadin 25 needs Java 21 or newer; got 17` |
+| Java is within the Boot line's range, when that line has a rule | `java version: Spring Boot 4.1 supports Java up to 26; got 27` |
+| the theme is one the Vaadin line ships | `theme: Vaadin 25 ships aura and lumo, not material` |
+
+Each message ends with the rule's `source` on a second line, in parentheses. A
+Boot minor with no rule has no Java ceiling: nobody has written one down, and the
+check in §11.4 is what notices.
+
+The same rules give the derivations: `BootDefault` (the pin if the rules allow
+it, else the newest allowed candidate, else nothing), `JavaRange` (the higher of
+the two floors, up to the Boot ceiling), `JavaDefault` (the preferred release if
+in range, else the newest LTS in range, else the floor), `Describe` (*21 or
+newer for Vaadin 25, up to 26 for Spring Boot 4.1.*), `Themes` (the line's
+themes, default first) and `ThemeDefault` (the preferred theme if the line ships
+it, else the line's default).
+
 ## 5. Version lookup
 
 5.1 At startup, in the background, the tool reads two `maven-metadata.xml`
@@ -210,12 +284,14 @@ documents:
 
 Both requests run concurrently. The response body is read through a 4 MiB limit.
 
-5.2 Only releases of the generation this tool targets are kept: `VaadinMajor` 25,
-`BootMajor` 4. A version with a qualifier is a pre-release and is skipped; a
-version that does not parse is skipped rather than guessed at.
+5.2 Only releases of the lines the rules mark `supported`, and the Boot lines
+those sit on, are kept — `25` and `4` as shipped. A version with a qualifier is a
+pre-release and is skipped; a version that does not parse is skipped rather than
+guessed at. An empty list of lines keeps every release, for §11.4.
 
 5.3 Kept versions are sorted newest first by major, minor, patch as numbers, and
-the first `offered` = 5 are returned.
+all of them are returned; the prompt offers the first `offered` = 5 that the
+rules allow.
 
 5.4 The whole lookup has 5 seconds (`lookupTimeout`, also the HTTP client
 timeout). It never fails: an empty list is a normal outcome and means the caller
@@ -223,6 +299,14 @@ keeps the version the defaults file named.
 
 5.5 The lookup is started before the questions and waited on once, whichever path
 asks for it.
+
+5.6 `PinnedBoot(vaadin)` reads
+`https://repo1.maven.org/maven2/com/vaadin/vaadin-spring-boot-starter/<v>/vaadin-spring-boot-starter-<v>.pom`
+and returns the version of its `org.springframework.boot` `spring-boot-starter-*`
+dependency — `-web` on Boot 3, `-webmvc` on Boot 4 — which is the Boot the release
+was built with. A 404 is `""` and no error: a typed release has no pom. Asked once
+per release, when the Vaadin answer is known, with the same timeout as the lookup;
+the answer is remembered for the run, `""` included.
 
 ## 6. The full-screen TUI
 
@@ -254,14 +338,16 @@ mode.
 | --- | --- | --- | --- |
 | 1 | Coordinates | What this project is called to Maven. | Group ID, Artifact ID |
 | 2 | Identity | What this project is called to people. | Project name, Description, Base package |
-| 3 | Versions | Newest first, from Maven Central. | Vaadin version, Spring Boot version, Java version |
-| 4 | Stack | The core is always generated. Choose its theme, and the rest. | Theme (a select: Aura, Lumo; described *Aura is the Vaadin 25 default.*), then Features (one multi-select of five options) |
+| 3 | Versions | Newest first, from Maven Central. | Vaadin version, Spring Boot version, Java version — three selects (§6.6) |
+| 4 | Stack | The core is always generated. Choose its theme, and the rest. | Theme (a select of the themes the chosen Vaadin ships, the line's default first, described *Aura is the Vaadin 25 default.* — §6.6.8), then Features (one multi-select of five options) |
 | — | Author | Git has no identity for the first commit. Kept in this repository only; git config --global sets one everywhere. | Name (inline), Email (inline) — a `span` row above Output, only when `Options.AskAuthor` (§6.2.6) |
 | 5 | Output | Created if it does not exist. Must be empty. | Directory (inline), Generate |
 
-6.2.2 Two further sections are hidden unless a version select was left on the
-"type one myself…" sentinel: `Vaadin version` and `Spring Boot version`, each a
-single validated input described as *A version Maven Central did not offer*.
+6.2.2 No version can be typed on the screen. Each version list offers what the
+lookup found and the rules allow, and nothing else; a release the lookup did not
+offer is what `--vaadin-version`, `--boot-version` and `--java-version` are for,
+and a set given that way is checked by `Validate` (§4.5) before anything is
+written.
 
 6.2.3 The stack options, in declaration order, each mapping to one `Config` flag:
 
@@ -367,22 +453,52 @@ answer.
 6.6.1 The version selects are built with whatever the defaults named, and the
 lookup's result arrives as a message. The screen never blocks on it.
 
-6.6.2 When it arrives, each list is replaced and its bound value set to the newest
-release, so the cursor opens there — unless that select has already been focused,
-in which case it is left alone.
+6.6.2 When it arrives, the Vaadin list is replaced and its bound value set to the
+newest release, so the cursor opens there — unless that select has already been
+focused, in which case it is left alone.
 
 6.6.3 A list that was fetched carries no description. An empty list keeps the
 built-in default and says so: *Maven Central could not be reached — this is the
 built-in default, which may be out of date.*
 
-6.6.4 Each select ends with `type one myself…`, bound to a sentinel that is not
-the empty string and not a shape `ValidVersion` accepts. A sentinel that survives
-with nothing typed falls back to the newest release.
+6.6.4 The Boot and theme lists follow the Vaadin answer and the Java list follows
+both versions, the way the derived answers follow the coordinates: each is
+re-derived when what it follows changes, and left alone otherwise. Nothing on the
+screen can be chosen from a list that was not derived for the answers above it,
+so a set the rules refuse cannot be assembled there.
+
+6.6.5 The Boot list is The Boot list is the fetched releases
+the rules allow for the Vaadin, newest first, at most `offered` of them, plus the
+release the Vaadin was built with if it is not among them, labelled `4.1.0 · built
+with 25.2.6`. It opens on that release, or on the newest allowed. The pin is asked
+for from a command when a Vaadin release is first chosen, and the list re-derived
+when it lands; offline the list is the defaults file's Boot alone.
+
+6.6.6 The Java list holds the LTS releases in the range the pair allows and the
+newest release in it, LTS ones labelled `21 · LTS`, described by `Describe`
+(§4.5). It opens on the defaults file's Java when the range allows it, and on the
+newest LTS in range when it does not, the description then adding *The default,
+17, is outside that.* A Boot with no rule has no ceiling; the list then runs to
+the newest Java any Boot rule names. A pair the rules refuse — possible only with
+the offline fallback — leaves the list as it was and puts the refusal in the
+description.
+
+6.6.7 A re-derived list keeps a choice already made in it when the new list still
+offers it; otherwise the cursor moves to where the list opens. The list is set with its first option bound and the cursor then
+walked down to the answer, because huh scrolls a list so that the bound value is
+its first row, which hides the newer releases above the pin.
+
+6.6.8 The theme list holds the themes the chosen Vaadin's line ships, in the
+rules' order, named for a person (`Aura`, `Lumo`), described *<default> is the
+Vaadin <line> default.* It opens on the defaults file's theme when the line ships
+it, and on the line's own default otherwise. The select validates its answer
+against the Vaadin as answered, for accessible mode, where the list is built
+before the Vaadin is typed.
 
 ### 6.7 After Generate
 
 6.7.1 Pressing Generate does not end the screen. The screen calls the injected
-`Options.Generate` with the completed answers (sentinels resolved, stack applied),
+`Options.Generate` with the completed answers (stack applied),
 shows the `Writing` box while it runs, and then the result.
 
 6.7.2 A generation failure ends the screen and is returned to `main`, which prints
@@ -436,9 +552,12 @@ rest. This is what the screen's live derivation replaces. The Author group is
 appended to the second form only when it is asked for — left out rather than
 hidden, because of 6.9.3.
 
-6.9.3 The version questions are plain inputs pre-filled with the newest release,
-not selects with a follow-up: huh asks a hidden group's questions anyway in
-accessible mode, which would ask for each version twice.
+6.9.3 The version questions are plain inputs pre-filled with the derived answers
+(§2.6) — the pin fetched once, between the two forms — not selects with a
+follow-up: huh asks a hidden group's questions anyway in accessible mode, which
+would ask for each version twice. Their validators apply the rules (§4.5) to the
+answers as typed so far, so a Boot typed over the default is checked against the
+Vaadin typed before it.
 
 6.9.4 An empty answer means "keep what you offered me", so validation lets the
 empty string through and huh substitutes the default. The full-screen form
@@ -457,8 +576,22 @@ all mean none.
 7.1 The whole tree is rendered into memory before anything is written, so a broken
 template leaves nothing on disk.
 
+7.1.1 `templates/` holds one directory per Vaadin version floor, named by the
+version its contents are true from — `25`, `25.2`, `25.2.3` — as
+`version.ParseFloor` reads it. `generate.New` reads the root once and refuses a
+file at the top or a name that is not a floor. `Layers(vaadin)` is every
+directory whose floor is at or below the version, newest first; none is an error
+naming the oldest set (`no templates for Vaadin 23.3.0: the oldest set is for
+24`), never a fall-back. A template is read from the first layer in the chain
+that has it, and `File.Source` names the layer-qualified path it came from. A
+layer holds only the files that differ from the layers below it; whether a file
+exists at all is the manifest's `when`, with `atLeast(vaadin)` for a file one
+line has and another does not. `--dry-run` prints `templates 25.2 → 25 → 24`
+under its heading.
+
 7.2 The manifest is the generated project, declared once. `dst` is itself a
-template, which is what places Java sources under the chosen package.
+template, which is what places Java sources under the chosen package; `src` is
+relative to whichever layer supplies it.
 
 | Template | Destination | When | Mode |
 | --- | --- | --- | --- |
@@ -555,7 +688,10 @@ single-child directories collapsed onto one line), `SectionBox`, `Fields`,
 
 8.6 The summary rows are `where` (path relative to the working directory when it
 is under it, absolute otherwise, and the file count), `stack` (the three
-versions, then the theme's name), `options` (`Selected()`, or `none — core only`), `ports` (`app <n>`,
+versions, then the theme's name; and under them, when the Boot is the release the
+Vaadin was built with, *Spring Boot 4.1.0 is the release Vaadin 25.2.6 was built
+with* — on the scripted path only when the Boot was derived, since a typed pair
+has had no pin fetched and a summary is not worth a request), `options` (`Selected()`, or `none — core only`), `ports` (`app <n>`,
 then `postgres <n>` with the database and `keycloak <n>` with auth), `git` (what
 was done —
 `initialised`, `commit-msg hook wired up`, `author kept in this repository`, `first
@@ -624,12 +760,24 @@ smoke test that builds the binary and runs `--version` and
 
 11.2 `cross-compile` — `make dist`, uploaded as artifacts.
 
-11.3 `generated project` — twice, once with everything off on the Aura default
-and once with everything on and `--theme lumo`, so both themes are compiled by a
-real JDK: generate with `--yes`, assert the project committed itself and has
-a clean working tree, then install Temurin 21 with the Maven cache keyed on the
-generated pom, and build and test it through `./run.sh test`. Surefire reports are
-kept on failure.
+11.3 `generated project` — per supported Vaadin line, twice: once with everything
+off on the Aura default and once with everything on and `--theme lumo`, so both
+themes are compiled by a real JDK. The line is passed as `--vaadin-version <line>`
+(§2.6), so no release number is pinned in the workflow, and each line names the
+JDK its floor pins for `setup-java`. Each leg generates with `--yes`, asserts the
+project committed itself and has a clean working tree, installs Temurin with the
+Maven cache keyed on the generated pom, and builds and tests it through
+`./run.sh test`. Surefire reports are kept on failure.
+
+11.4 `.github/workflows/versions.yml`, weekly, on demand, and on a pull request
+touching `compat.json` or the check, runs `go run ./internal/checkcompat
+compat.json`. It parses the file (the schema check), reads every Vaadin release
+and the Boot releases of the supported lines from Maven Central, and the starter
+pom of each supported line's newest release, and fails naming each of: a newest
+release built with a Boot the rules refuse for it; a Vaadin major, from the oldest
+ruled line up, with no rule; a Boot line a supported Vaadin line sits on that is
+past `eol`; a Boot minor with no rule. Every message quotes the rule's source.
+The decision is a pure function over the fetched lists, tested offline.
 
 ## 12. The generated project
 
@@ -736,7 +884,9 @@ through.
 ## 13. Verification
 
 13.1 `internal/generate` renders all 32 combinations of the five options, under
-each of the two themes, and
+each theme the line ships, for every line `compat.json` supports — from a table
+of one version set per line, which a test requires to have a row for every
+supported line and no row for any other, each row accepted by the rules — and
 checks each: the pom is well-formed XML, the realm is valid JSON, no file carries
 an unresolved template value, every Java file declares the package its path
 implies, each optional file appears exactly when its option is on, the pom names a
@@ -755,7 +905,14 @@ repository's config and no further and is who the commit is by, and that
 `CurrentAuthor(dir)` reports what git has — nothing, one half, both — including
 an identity from the output directory's own repository or from a conditional
 include keyed on its parent, and not the identity of the repository the test is
-standing in; and that asking leaves nothing beside the project.
+standing in; and that asking leaves nothing beside the project. On the layers:
+that `Layers` follows the floors on a tree of its own (`25.2 25 24` for 25.2.6,
+`25 24` for 25.1.0, `24` for 24.10.9, an error naming 24 for 23.3.0) and `open`
+takes a file from the newest layer that has it; that `New` refuses a file at the
+top, a directory not named by a floor, and an empty root; that `compat.json`'s
+supported lines and the directories agree in both directions; that every file in
+every layer is named by a manifest entry; that no layer repeats, byte for byte,
+the file below it; and that the verbatim files are read through `File.Source`.
 
 13.2 `internal/prompt` drives the conversation two ways: through huh's accessible
 mode, and by stepping the full-screen model at a range of terminal sizes. The
@@ -763,9 +920,14 @@ screen's assertions are that every section, every version and every stack option
 is on screen at once; that the screen fits the terminal at every size or falls
 back to one section at a time; that the bar is on the bottom row whatever is above
 it; that only one question is ever active after a jump; that a derived answer
-follows the coordinates but a typed one is never taken back; that the version
-lists open on the newest release; that the escape hatch appears when a version is
-typed; that the author section is a row above the output only when it is asked for, and that
+follows the coordinates but a typed one is never taken back; that the Vaadin
+list opens on the newest release and the Boot list on the release it was built
+with, labelled, with the newer releases still in view; that the Boot list follows
+the Vaadin answer and keeps a choice while it is still allowed; that the Java list
+holds the LTS releases and the newest in range, opens on the default or snaps to
+the newest LTS and says so; that the theme list follows the Vaadin, offering only
+what the line ships and naming its default; that no version list offers typing
+and no section is hidden; that the author section is a row above the output only when it is asked for, and that
 its questions are asked in accessible mode, refuse an empty answer with nothing
 offered, and keep an offered half; that the output section is the only one with a row of its own and is drawn
 to the whole width; that generating is one button and the bar advertises no key
@@ -773,7 +935,35 @@ that does nothing; that the project is written without leaving the screen; that 
 task runs into the log and comes back, a failure included; that ctrl+c stops the
 task and not the screen; and that the log takes the room that is left.
 
-13.3 `TestPreview` renders the screen at several terminal sizes without a
+In accessible mode: that the derived Boot is the pin and the derived Java the
+default, that a Vaadin, Boot or Java refused by the rules is asked again at its
+field, and that an out-of-range Java default snaps.
+
+An empty `compat.Rules` refuses every theme, and huh's accessible select re-asks a
+refused answer until one is accepted — with the input exhausted, forever. Every
+test conversation therefore starts from `conversation()`, which carries the
+shipped rules.
+
+13.4 `internal/compat` table-tests the rules over the shipped file: an
+unsupported line is refused naming its Boot line and source, `since` tightens the
+Boot minimum per release, `CompatibleBoot` keeps the line and the minimum,
+`JavaRange` refuses the pair before Java and has no ceiling for an unruled Boot
+minor, `java_max` is inclusive, `BootDefault` prefers a pin the rules allow, a
+theme the line does not ship is refused and `ThemeDefault` falls back to the
+line's own, an
+override wins per line and leaves the other lines alone, and a malformed file is
+refused naming the entry. `internal/config` checks `Validate` accepts 25.2.6 with
+4.1.0 on 21 and 25 and refuses 4.0.8, Java 17 and 27, and 24.10.9, each with the
+field and the rule named. `internal/versions` reads the pinned Boot from a `-web`
+and a `-webmvc` starter pom served locally, and a 404 as `""` with no error.
+`main` asserts a `--yes` run with a refused set fails naming the field and writes
+nothing, and a compatible fully pinned set is accepted with no network.
+`internal/checkcompat` tests its findings over the releases Maven Central listed
+the day the file was written — quiet — and with a pin moved ahead of the rules, a
+Vaadin major with no rule, a Boot line past its end of support, and a Boot minor
+with no rule.
+
+13.5 `TestPreview` renders the screen at several terminal sizes without a
 terminal, for reviewing how it looks:
 
 ```sh

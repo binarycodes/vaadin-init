@@ -10,7 +10,7 @@ import (
 )
 
 // section is one part of the conversation: a heading, the questions asked under
-// it, and — for the escape hatches — whether it is being asked at all.
+// it, and — for the author — whether it is being asked at all.
 //
 // The fields are kept beside the group because huh hands neither back: the
 // layout has to know which section the cursor is in to draw the others as
@@ -49,9 +49,9 @@ func newSection(title, description string, hide func() bool, fields ...huh.Field
 	}
 }
 
-// shown reports whether this section is being asked. An escape hatch that has
-// not been reached for is not a column: it would be an empty heading taking
-// width from the sections that do have something to say.
+// shown reports whether this section is being asked. A section that is not is
+// not a column: it would be an empty heading taking width from the sections that
+// do have something to say.
 func (s section) shown() bool { return s.hide == nil || !s.hide() }
 
 func (s section) holds(field huh.Field) bool {

@@ -2,12 +2,15 @@ package prompt
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
+	"github.com/binarycodes/vaadin-init/internal/compat"
+	"github.com/binarycodes/vaadin-init/internal/config"
 	"github.com/binarycodes/vaadin-init/internal/ui"
 	"github.com/binarycodes/vaadin-init/internal/versions"
 )
@@ -28,11 +31,49 @@ func screenAt(t *testing.T, width, height int) *screen {
 	t.Helper()
 
 	c := seed()
-	s := newScreen(&c, offered(), Options{Banner: banner})
+	s := newScreen(&c, lookedUp(), screenOptions())
 	s.Init()
-	s.Update(versionsMsg(fetched()))
+	land(s)
 	s.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	return s
+}
+
+func screenOptions() Options {
+	options := conversation()
+	options.Banner = banner
+	return options
+}
+
+// land hands the screen what the lookup found, and then what the pin source
+// says about the release it chose — running the command the screen asked for,
+// the way the runtime would.
+func land(s *screen) {
+	_, cmd := s.Update(versionsMsg(fetched()))
+	deliver(s, cmd)
+}
+
+// deliver runs a command and feeds the screen the pins that come back. Nothing
+// else is fed back: the rest is huh's own housekeeping, which these tests have
+// never needed.
+func deliver(s *screen, cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			deliver(s, c)
+		}
+	case pinMsg:
+		_, next := s.Update(msg)
+		deliver(s, next)
+	}
+}
+
+// compatible is the part of the fetched Boot list the rules allow for the newest
+// Vaadin: everything the Boot list can offer.
+func compatible() []string {
+	return rules.CompatibleBoot(fetched().Vaadin[0], fetched().Boot)
 }
 
 // The banner is part of what has to fit, so the sizes these tests talk about are
@@ -87,9 +128,19 @@ func TestEverySectionIsOnScreenAtOnce(t *testing.T) {
 			t.Errorf("section %q is not on the screen", section.title)
 		}
 	}
-	for _, version := range append(fetched().Vaadin, fetched().Boot...) {
+	for _, version := range append(fetched().Vaadin, compatible()...) {
 		if !strings.Contains(on, version) {
 			t.Errorf("version %s is not on the screen", version)
+		}
+	}
+	for _, version := range fetched().Boot {
+		if !slices.Contains(compatible(), version) && strings.Contains(on, version) {
+			t.Errorf("Boot %s does not go with Vaadin %s and should not be offered", version, fetched().Vaadin[0])
+		}
+	}
+	for _, java := range []string{"21 · LTS", "25 · LTS", "26"} {
+		if !strings.Contains(on, java) {
+			t.Errorf("Java %q is not on the screen", java)
 		}
 	}
 	for _, f := range featureList {
@@ -267,7 +318,7 @@ func TestTheVersionListsOpenOnTheNewestRelease(t *testing.T) {
 	c.VaadinVersion = "25.2.2"
 	c.BootVersion = "4.0.6"
 
-	s := newScreen(&c, offered(), Options{Banner: banner})
+	s := newScreen(&c, lookedUp(), screenOptions())
 	s.Init()
 	s.Update(tea.WindowSizeMsg{Width: wide, Height: tall})
 
@@ -275,13 +326,186 @@ func TestTheVersionListsOpenOnTheNewestRelease(t *testing.T) {
 		t.Error("the version the defaults named should be offered until the lookup lands")
 	}
 
-	s.Update(versionsMsg(fetched()))
+	// The lookup alone: the newest Vaadin, and the newest Boot the rules allow
+	// with it, until the pin is known.
+	_, cmd := s.Update(versionsMsg(fetched()))
 
 	if s.c.VaadinVersion != fetched().Vaadin[0] {
 		t.Errorf("Vaadin version = %q, want the newest release", s.c.VaadinVersion)
 	}
+	if s.c.BootVersion != compatible()[0] {
+		t.Errorf("Spring Boot version = %q, want the newest compatible release", s.c.BootVersion)
+	}
+
+	// Then the pin: the Boot list opens on the release the Vaadin was built
+	// with, and says so.
+	deliver(s, cmd)
+	if s.c.BootVersion != "4.1.0" {
+		t.Errorf("Spring Boot version = %q, want the release Vaadin 25.2.6 was built with", s.c.BootVersion)
+	}
+	on := view(s)
+	if !strings.Contains(on, "4.1.0 · built with 25.2.6") {
+		t.Error("the pinned release is not labelled on the screen")
+	}
+	if !strings.Contains(on, "4.1.1") {
+		t.Error("the newer release above the pin has scrolled out of view")
+	}
+}
+
+// The Boot list follows the Vaadin answer: choosing another Vaadin re-derives
+// it, and the Java list follows the pair.
+func TestTheBootListFollowsTheVaadinAnswer(t *testing.T) {
+	s := screenAt(t, wide, tall)
+
+	// The lookup offers an older Vaadin whose Boot minimum is lower: 25.1.x
+	// takes 4.0.4 and newer, so the 4.0.x releases come back into the list.
+	s.c.VaadinVersion = "25.1.9"
+	deliver(s, s.derive())
+
+	on := view(s)
+	for _, boot := range fetched().Boot {
+		if !strings.Contains(on, boot) {
+			t.Errorf("Boot %s goes with Vaadin 25.1.9 and should be offered", boot)
+		}
+	}
 	if s.c.BootVersion != fetched().Boot[0] {
-		t.Errorf("Spring Boot version = %q, want the newest release", s.c.BootVersion)
+		t.Errorf("Spring Boot version = %q, want the newest compatible, there being no pin for 25.1.9", s.c.BootVersion)
+	}
+	if !strings.Contains(on, "4.1.0") || strings.Contains(on, "built with 25.2.6") {
+		t.Error("the old pin's label should have gone with the Vaadin it was for")
+	}
+
+	// Back to the newest, and the pin is remembered rather than asked for again.
+	s.c.VaadinVersion = "25.2.6"
+	deliver(s, s.derive())
+	if s.c.BootVersion != "4.1.0" {
+		t.Errorf("Spring Boot version = %q, want the pin again", s.c.BootVersion)
+	}
+}
+
+// A Boot choice already made is kept when the new Vaadin still allows it, and
+// moved when it does not — nobody's answer is taken away for no reason.
+func TestAChosenBootIsKeptWhileItIsStillCompatible(t *testing.T) {
+	s := screenAt(t, wide, tall)
+	s.visited[s.fields.boot] = true
+	s.c.BootVersion = "4.1.1"
+
+	s.c.VaadinVersion = "25.2.5"
+	deliver(s, s.derive())
+	if s.c.BootVersion != "4.1.1" {
+		t.Errorf("Spring Boot version = %q, want the choice kept", s.c.BootVersion)
+	}
+
+	s.c.BootVersion = "4.0.8"
+	s.c.VaadinVersion = "25.1.9"
+	deliver(s, s.derive())
+	if s.c.BootVersion != "4.0.8" {
+		t.Errorf("Spring Boot version = %q, want the choice kept", s.c.BootVersion)
+	}
+	s.c.VaadinVersion = "25.2.6"
+	deliver(s, s.derive())
+	if s.c.BootVersion != "4.1.0" {
+		t.Errorf("Spring Boot version = %q, want it moved off a release 25.2.6 refuses", s.c.BootVersion)
+	}
+}
+
+// The Java list holds exactly the range the pair allows, opens on the default
+// when that is in range, and otherwise on the newest LTS with a line saying why.
+func TestTheJavaListHoldsTheRange(t *testing.T) {
+	s := screenAt(t, wide, tall)
+	if s.c.JavaVersion != "21" {
+		t.Errorf("Java version = %q, want the default, which is in range", s.c.JavaVersion)
+	}
+	// In pieces short enough to survive being wrapped in a column.
+	on := view(s)
+	for _, piece := range []string{"21 or newer for Vaadin 25", "for Spring Boot 4.1"} {
+		if !strings.Contains(on, piece) {
+			t.Errorf("the Java question does not say what bounds it: %q missing", piece)
+		}
+	}
+	for _, java := range []string{"❯ 17", "  17", "  20", "  27"} {
+		if strings.Contains(on, java) {
+			t.Errorf("a JDK outside the range is on the screen: %q", java)
+		}
+	}
+
+	c := seed()
+	c.JavaVersion = "17"
+	snapped := newScreen(&c, lookedUp(), screenOptions())
+	snapped.Init()
+	land(snapped)
+	snapped.Update(tea.WindowSizeMsg{Width: wide, Height: tall})
+	if snapped.c.JavaVersion != "25" {
+		t.Errorf("Java version = %q, want the newest LTS in range", snapped.c.JavaVersion)
+	}
+	if !strings.Contains(view(snapped), "default, 17, is outside") {
+		t.Error("the screen does not say why the default was not used")
+	}
+}
+
+// The theme list follows the Vaadin answer: a line that ships one theme offers
+// one, and the cursor moves off a theme the new line does not have.
+//
+// With rules of this test's own, since the shipped file supports one line and
+// that line ships both themes: here 24 is supported too, on Lumo alone.
+func TestTheThemeListFollowsTheVaadinAnswer(t *testing.T) {
+	twoLines, err := compat.Parse([]byte(`{
+	  "vaadin": [
+	    {"line": "25", "supported": true, "java_min": 21, "boot_line": "4", "boot_min": "4.0.0", "themes": ["aura", "lumo"], "source": ""},
+	    {"line": "24", "supported": true, "java_min": 17, "boot_line": "3", "boot_min": "3.5.0", "themes": ["lumo"], "source": ""}
+	  ],
+	  "boot": [
+	    {"line": "4.1", "java_min": 17, "java_max": 26, "eol": "", "source": ""},
+	    {"line": "3.5", "java_min": 17, "java_max": 25, "eol": "", "source": ""}
+	  ],
+	  "java": {"lts": [17, 21, 25]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := seed()
+	options := screenOptions()
+	options.Rules = twoLines
+	s := newScreen(&c, lookedUp(), options)
+	s.Init()
+	_, cmd := s.Update(versionsMsg(versions.Available{Vaadin: []string{"25.2.6", "24.10.9"}, Boot: []string{"4.1.1", "3.5.15"}}))
+	deliver(s, cmd)
+	s.Update(tea.WindowSizeMsg{Width: wide, Height: tall})
+
+	if s.c.Theme != config.ThemeAura || !strings.Contains(view(s), "Lumo") {
+		t.Fatalf("Vaadin 25 should offer both themes and open on Aura: theme %q", s.c.Theme)
+	}
+
+	s.c.VaadinVersion = "24.10.9"
+	deliver(s, s.derive())
+	if s.c.Theme != config.ThemeLumo {
+		t.Errorf("theme = %q, want the one theme Vaadin 24 ships", s.c.Theme)
+	}
+	if on := view(s); strings.Contains(on, "Aura") || !strings.Contains(on, "Lumo is the Vaadin 24 default.") {
+		t.Error("Aura is offered, or the line's own default not named, for a Vaadin that does not ship it")
+	}
+	if s.c.BootVersion != "3.5.15" || s.c.JavaVersion != "21" {
+		t.Errorf("Boot %q and Java %q should have followed too", s.c.BootVersion, s.c.JavaVersion)
+	}
+
+	s.c.VaadinVersion = "25.2.6"
+	deliver(s, s.derive())
+	if s.c.Theme != config.ThemeAura {
+		t.Errorf("theme = %q, want the default back once the line ships it again", s.c.Theme)
+	}
+}
+
+// A version list offers what the lookup found and nothing else: no way to type a
+// release into the screen, which is what --vaadin-version and its siblings are
+// for. A version outside the list is a version the rules have not seen, and a
+// typed one landed in a pom.xml is the failure the lookup exists to prevent.
+func TestTheVersionListsOfferNoTyping(t *testing.T) {
+	s := screenAt(t, wide, tall)
+	if on := view(s); strings.Contains(on, "type one myself") {
+		t.Error("a version list offers to take a typed version")
+	}
+	if got := len(s.tiled.shown()); got != 5 {
+		t.Errorf("%d sections, want the five with no hidden ones", got)
 	}
 }
 
@@ -365,33 +589,6 @@ func TestAgreeingEndsTheScreen(t *testing.T) {
 	}
 	if s.View() != "" {
 		t.Error("the screen should draw nothing once it is finished, so the terminal comes back clean")
-	}
-}
-
-// The escape hatch is a section like any other, and only there when it is asked
-// for: choosing "type one myself" adds a column, and answering it takes the
-// column away again.
-func TestTypingAVersionAddsASection(t *testing.T) {
-	s := screenAt(t, wide, tall)
-
-	if got := len(s.tiled.shown()); got != 5 {
-		t.Fatalf("%d sections before a version is typed, want 5", got)
-	}
-
-	s.c.VaadinVersion = custom
-	s.Update(tea.WindowSizeMsg{Width: wide, Height: tall})
-
-	if got := len(s.tiled.shown()); got != 6 {
-		t.Errorf("%d sections after choosing to type a version, want 6", got)
-	}
-	// Counted rather than matched on its prose, which wraps differently in a
-	// column than it does in a line: the question appears twice now, once as the
-	// list it was not on and once as the box to type it into.
-	if got := strings.Count(view(s), "Vaadin version"); got < 2 {
-		t.Error("the typed-version question is not on the screen")
-	}
-	if hints := ansi.ReplaceAllString(s.bar(), ""); !strings.Contains(hints, "alt+6") {
-		t.Errorf("the new section has no key of its own: %q", hints)
 	}
 }
 
@@ -523,9 +720,11 @@ func TestGeneratingIsOneButton(t *testing.T) {
 // for: a machine whose git knows its user gets the five sections it always had.
 func TestTheAuthorIsARowAboveTheOutputOnlyWhenAsked(t *testing.T) {
 	c := seed()
-	s := newScreen(&c, offered(), Options{Banner: banner, AskAuthor: true})
+	options := screenOptions()
+	options.AskAuthor = true
+	s := newScreen(&c, lookedUp(), options)
 	s.Init()
-	s.Update(versionsMsg(fetched()))
+	land(s)
 	s.Update(tea.WindowSizeMsg{Width: wide, Height: tall})
 
 	if got := len(s.tiled.shown()); got != 6 {
